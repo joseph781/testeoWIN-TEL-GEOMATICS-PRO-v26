@@ -15336,279 +15336,1468 @@ ${this.criticalPoints.filter(cp => cp.risk === 'alto').length > 2 ? '• ⚠️ 
 
     // ========== MÓDULO 2: GENERADOR DE PLANOS PROFESIONALES ==========
     const PlanoGenerator = {
-        panel: null,
+        panel: null, results: null,
         togglePanel() {
             if (this.panel) { this.panel.remove(); this.panel = null; return; }
-            const html = `<div id="plano-panel" class="float-panel" style="top:80px;right:60px;width:360px;max-height:80vh;overflow-y:auto;">
+            const html = `<div id="plano-panel" class="float-panel" style="top:80px;right:60px;width:380px;max-height:90vh;overflow-y:auto;">
                 <div class="panel-hdr" style="background:linear-gradient(135deg,rgba(139,92,246,0.3),rgba(124,58,237,0.2));">
                     <div class="panel-title"><i class="fa-solid fa-map" style="color:#a78bfa;"></i> Generador de Planos</div>
                     <button class="panel-close" onclick="PlanoGenerator.togglePanel()"><i class="fa-solid fa-times"></i></button>
                 </div>
                 <div class="panel-body">
-                    <div class="form-group"><label class="form-label">Título</label>
+                    <div style="background:rgba(139,92,246,0.15);border:1px solid #a78bfa;border-radius:6px;padding:10px;margin-bottom:12px;">
+                        <div style="font-size:10px;color:#a78bfa;font-weight:700;">📐 PLANO TOPOGRÁFICO PROFESIONAL</div>
+                        <div style="font-size:9px;color:var(--text-3);margin-top:3px;">Genera informe completo con coordenadas UTM, rumbos, distancias, áreas y lotes</div>
+                    </div>
+                    <div class="form-group"><label class="form-label">Título del Plano</label>
                         <input type="text" id="plano-title" class="form-input" value="PLANO DE LEVANTAMIENTO TOPOGRÁFICO">
                     </div>
                     <div class="form-group"><label class="form-label">Propietario</label>
-                        <input type="text" id="plano-owner" class="form-input" placeholder="Nombre">
+                        <input type="text" id="plano-owner" class="form-input" placeholder="Nombre del propietario">
                     </div>
                     <div class="form-group"><label class="form-label">Ubicación</label>
-                        <input type="text" id="plano-location" class="form-input" placeholder="Municipio, Estado">
+                        <input type="text" id="plano-location" class="form-input" placeholder="Municipio, Estado, Parroquia">
+                    </div>
+                    <div class="form-group"><label class="form-label">Nro. de Catastro / Expediente</label>
+                        <input type="text" id="plano-catastro" class="form-input" placeholder="Nro. catastral (opcional)">
                     </div>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
                         <div class="form-group"><label class="form-label">Escala</label>
                             <select id="plano-scale" class="form-input">
-                                <option value="500">1:500</option><option value="1000" selected>1:1000</option>
-                                <option value="2000">1:2000</option><option value="5000">1:5000</option>
+                                <option value="250">1:250</option><option value="500">1:500</option>
+                                <option value="1000" selected>1:1000</option><option value="2000">1:2000</option>
+                                <option value="5000">1:5000</option><option value="10000">1:10000</option>
                             </select>
                         </div>
                         <div class="form-group"><label class="form-label">Formato</label>
                             <select id="plano-format" class="form-input">
-                                <option value="A4">A4</option><option value="A3" selected>A3</option><option value="A2">A2</option>
+                                <option value="A4">A4</option><option value="A3" selected>A3</option>
+                                <option value="A2">A2</option><option value="A1">A1</option>
                             </select>
                         </div>
                     </div>
-                    <div class="form-group"><label class="form-label">Profesional</label>
-                        <input type="text" id="plano-prof" class="form-input" placeholder="Ing. / TSU">
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                        <div class="form-group"><label class="form-label">Profesional</label>
+                            <input type="text" id="plano-prof" class="form-input" placeholder="Ing. / TSU">
+                        </div>
+                        <div class="form-group"><label class="form-label">Colegiatura</label>
+                            <input type="text" id="plano-civ" class="form-input" placeholder="CIV / CAV">
+                        </div>
                     </div>
-                    <div class="form-group"><label class="form-label">Colegiatura</label>
-                        <input type="text" id="plano-civ" class="form-input" placeholder="CIV / CAV">
+                    <div class="form-group"><label class="form-label">Observaciones</label>
+                        <input type="text" id="plano-obs" class="form-input" placeholder="Notas adicionales (opcional)">
                     </div>
-                    <button class="btn" onclick="PlanoGenerator.generate()" style="background:linear-gradient(135deg,#8b5cf6,#7c3aed);">
-                        <i class="fa-solid fa-file-pdf"></i> GENERAR PDF
+                    <button class="btn" onclick="PlanoGenerator.computeAndGenerate()" style="background:linear-gradient(135deg,#8b5cf6,#7c3aed);">
+                        <i class="fa-solid fa-calculator"></i> CALCULAR Y GENERAR
                     </button>
+                    <div id="plano-results" style="display:none;margin-top:12px;"></div>
                 </div>
             </div>`;
             document.body.insertAdjacentHTML('beforeend', html);
             this.panel = document.getElementById('plano-panel');
         },
-        generate() {
-            if (!State.polygon && State.blocks.length === 0) return Toast.show('Dibuja un polígono', 'error');
-            if (typeof jspdf === 'undefined') return Toast.show('PDF no disponible', 'error');
+        computeAndGenerate() {
+            if (!State.polygon && State.blocks.length === 0) return Toast.show('Dibuja un polígono primero', 'error');
             Loading.show();
+            try {
+                const target = State.polygon || State.blocks[0]?.geo;
+                const coords = target.geometry.coordinates[0];
+                const zone = UTM.getZone(coords[0][0]);
+                const area = GeoMath.area(coords);
+                const perimeter = GeoMath.perimeter(coords);
+                // Build vertex table with UTM
+                const vertices = [];
+                for (let i = 0; i < coords.length - 1; i++) {
+                    const [lon, lat] = coords[i];
+                    const utm = UTM.fromLatLon(lon, lat, zone);
+                    vertices.push({ n: i + 1, lat, lon, utmE: utm[0], utmN: utm[1] });
+                }
+                // Build edges table with distance, azimuth, rumbo
+                const edges = [];
+                for (let i = 0; i < coords.length - 1; i++) {
+                    const [lon1, lat1] = coords[i];
+                    const [lon2, lat2] = coords[(i + 1) % (coords.length - 1)] || coords[i + 1];
+                    const dist = GeoMath.vincentyDist(lat1, lon1, lat2, lon2);
+                    const az = GeoMath.bearing(lat1, lon1, lat2, lon2);
+                    const rumbo = GeoMath.azToRumbo(az);
+                    edges.push({ from: i + 1, to: (i + 1 >= coords.length - 1) ? 1 : i + 2, dist, az, rumbo });
+                }
+                // Centroid
+                const centroid = turf.centroid(target).geometry.coordinates;
+                const centroidUTM = UTM.fromLatLon(centroid[0], centroid[1], zone);
+                // Bounding box
+                const bbox = turf.bbox(target);
+                const bboxUTM_min = UTM.fromLatLon(bbox[0], bbox[1], zone);
+                const bboxUTM_max = UTM.fromLatLon(bbox[2], bbox[3], zone);
+                const widthM = GeoMath.vincentyDist(bbox[1], bbox[0], bbox[1], bbox[2]);
+                const heightM = GeoMath.vincentyDist(bbox[1], bbox[0], bbox[3], bbox[0]);
+                // Lots info
+                const lotsInfo = [];
+                if (State.blocks.length > 0) {
+                    State.blocks.forEach(b => {
+                        const lCoords = b.geo.geometry.coordinates[0];
+                        const lZone = UTM.getZone(lCoords[0][0]);
+                        const lArea = GeoMath.area(lCoords);
+                        const lPerim = GeoMath.perimeter(lCoords);
+                        const lVerts = [];
+                        for (let i = 0; i < lCoords.length - 1; i++) {
+                            const utm = UTM.fromLatLon(lCoords[i][0], lCoords[i][1], lZone);
+                            lVerts.push({ n: i + 1, utmE: utm[0], utmN: utm[1] });
+                        }
+                        lotsInfo.push({ id: b.id, area: lArea, perim: lPerim, verts: lVerts, color: b.color });
+                    });
+                }
+                // Metadata
+                const meta = {
+                    title: $('plano-title')?.value || 'PLANO TOPOGRÁFICO',
+                    owner: $('plano-owner')?.value || '',
+                    location: $('plano-location')?.value || '',
+                    catastro: $('plano-catastro')?.value || '',
+                    scale: $('plano-scale')?.value || '1000',
+                    format: $('plano-format')?.value || 'A3',
+                    prof: $('plano-prof')?.value || '',
+                    civ: $('plano-civ')?.value || '',
+                    obs: $('plano-obs')?.value || '',
+                    date: new Date().toLocaleDateString('es-ES'),
+                    dateISO: new Date().toISOString()
+                };
+                this.results = {
+                    coords, zone, area, perimeter, vertices, edges,
+                    centroid, centroidUTM, bbox, bboxUTM_min, bboxUTM_max,
+                    widthM, heightM, lotsInfo, meta, numVertices: vertices.length
+                };
+                this.showResults();
+                Loading.hide();
+                Toast.show('Datos topográficos calculados', 'success');
+            } catch (e) {
+                Loading.hide();
+                Toast.show('Error: ' + e.message, 'error');
+                console.error(e);
+            }
+        },
+        showResults() {
+            const r = this.results;
+            if (!r) return;
+            const rd = $('plano-results');
+            if (!rd) return;
+            rd.style.display = 'block';
+            rd.innerHTML = `<div style="background:linear-gradient(135deg,rgba(139,92,246,0.2),rgba(124,58,237,0.15));border-radius:8px;padding:12px;">
+                <div style="text-align:center;margin-bottom:10px;">
+                    <div style="font-size:10px;color:var(--text-3);">RESUMEN TOPOGRÁFICO</div>
+                    <div style="font-size:16px;font-weight:800;color:#a78bfa;">${(r.area / 10000).toFixed(4)} Ha</div>
+                    <div style="font-size:10px;color:var(--text-3);">${r.area.toFixed(2)} m²</div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                    <div style="text-align:center;background:var(--bg-glass);padding:6px;border-radius:4px;">
+                        <div style="font-size:14px;font-weight:700;color:#22c55e;">${r.perimeter.toFixed(2)}</div>
+                        <div style="font-size:8px;">PERÍMETRO (m)</div>
+                    </div>
+                    <div style="text-align:center;background:var(--bg-glass);padding:6px;border-radius:4px;">
+                        <div style="font-size:14px;font-weight:700;color:#f59e0b;">${r.numVertices}</div>
+                        <div style="font-size:8px;">VÉRTICES</div>
+                    </div>
+                </div>
+            </div>
+            <div style="margin-top:10px;">
+                <div style="font-size:10px;font-weight:600;color:#a78bfa;margin-bottom:6px;">
+                    <i class="fa-solid fa-crosshairs"></i> COORDENADAS UTM (Zona ${r.zone})
+                </div>
+                <div style="max-height:150px;overflow-y:auto;background:var(--bg-glass);border-radius:6px;padding:6px;">
+                    <table style="width:100%;font-size:9px;border-collapse:collapse;">
+                        <thead><tr style="color:#a78bfa;">
+                            <th style="padding:2px;">V</th><th style="padding:2px;">Este</th><th style="padding:2px;">Norte</th>
+                        </tr></thead>
+                        <tbody style="color:var(--text-2);">
+                            ${r.vertices.map(v => `<tr><td style="text-align:center;padding:2px;"><b>${v.n}</b></td><td style="padding:2px;">${v.utmE.toFixed(2)}</td><td style="padding:2px;">${v.utmN.toFixed(2)}</td></tr>`).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div style="margin-top:10px;">
+                <div style="font-size:10px;font-weight:600;color:#22c55e;margin-bottom:6px;">
+                    <i class="fa-solid fa-ruler-combined"></i> LADOS - DISTANCIAS Y RUMBOS
+                </div>
+                <div style="max-height:150px;overflow-y:auto;background:var(--bg-glass);border-radius:6px;padding:6px;">
+                    <table style="width:100%;font-size:9px;border-collapse:collapse;">
+                        <thead><tr style="color:#22c55e;">
+                            <th style="padding:2px;">Lado</th><th style="padding:2px;">Dist(m)</th><th style="padding:2px;">Az°</th><th style="padding:2px;">Rumbo</th>
+                        </tr></thead>
+                        <tbody style="color:var(--text-2);">
+                            ${r.edges.map(e => `<tr><td style="text-align:center;padding:2px;"><b>${e.from}-${e.to}</b></td><td style="padding:2px;">${e.dist.toFixed(2)}</td><td style="padding:2px;">${e.az.toFixed(2)}°</td><td style="padding:2px;font-size:8px;">${e.rumbo}</td></tr>`).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            ${r.lotsInfo.length > 0 ? `<div style="margin-top:10px;">
+                <div style="font-size:10px;font-weight:600;color:#f59e0b;margin-bottom:6px;">
+                    <i class="fa-solid fa-th-large"></i> SUBDIVISIONES (${r.lotsInfo.length} lotes)
+                </div>
+                <div style="max-height:100px;overflow-y:auto;background:var(--bg-glass);border-radius:6px;padding:6px;font-size:9px;color:var(--text-2);">
+                    ${r.lotsInfo.map(l => `<div style="display:flex;align-items:center;gap:4px;padding:2px 0;"><span style="display:inline-block;width:8px;height:8px;background:${l.color};border-radius:2px;"></span> Lote ${l.id}: <b>${(l.area / 10000).toFixed(4)} Ha</b> | P: ${l.perim.toFixed(1)}m | ${l.verts.length}v</div>`).join('')}
+                </div>
+            </div>` : ''}
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:12px;">
+                <button class="btn btn-2" onclick="PlanoGenerator.exportKML()" style="font-size:8px;padding:6px;" title="Google Earth">
+                    <i class="fa-solid fa-earth-americas"></i> KML
+                </button>
+                <button class="btn btn-2" onclick="PlanoGenerator.exportGeoJSON()" style="font-size:8px;padding:6px;" title="GIS">
+                    <i class="fa-solid fa-code"></i> JSON
+                </button>
+                <button class="btn btn-2" onclick="PlanoGenerator.exportDXF()" style="font-size:8px;padding:6px;" title="AutoCAD">
+                    <i class="fa-solid fa-drafting-compass"></i> DXF
+                </button>
+                <button class="btn btn-2" onclick="PlanoGenerator.exportCSV()" style="font-size:8px;padding:6px;" title="Excel">
+                    <i class="fa-solid fa-file-csv"></i> CSV
+                </button>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:4px;">
+                <button class="btn btn-2" onclick="PlanoGenerator.exportGPX()" style="font-size:8px;padding:6px;" title="GPS">
+                    <i class="fa-solid fa-satellite"></i> GPX
+                </button>
+                <button class="btn" onclick="PlanoGenerator.exportPDF()" style="font-size:8px;padding:6px;background:linear-gradient(135deg,#8b5cf6,#7c3aed);" title="Plano PDF profesional">
+                    <i class="fa-solid fa-file-pdf"></i> PDF
+                </button>
+                <button class="btn btn-2" onclick="PlanoGenerator.exportTXT()" style="font-size:8px;padding:6px;" title="Texto">
+                    <i class="fa-solid fa-file-lines"></i> TXT
+                </button>
+                <button class="btn btn-2" onclick="PlanoGenerator.copyToClipboard()" style="font-size:8px;padding:6px;" title="Copiar">
+                    <i class="fa-solid fa-copy"></i> COPY
+                </button>
+            </div>`;
+        },
+        // ========== EXPORTAR KML ==========
+        exportKML() {
+            if (!this.results) return Toast.show('Calcula primero', 'error');
+            const r = this.results;
+            const kmlCoords = r.coords.map(c => `${c[0]},${c[1]},0`).join(' ');
+            let vertDesc = r.vertices.map(v => `V${v.n}: E${v.utmE.toFixed(2)} N${v.utmN.toFixed(2)}`).join('&#10;');
+            let edgeDesc = r.edges.map(e => `${e.from}-${e.to}: ${e.dist.toFixed(2)}m Az:${e.az.toFixed(2)}° ${e.rumbo}`).join('&#10;');
+            let kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+<n>${r.meta.title}</n>
+<description>Propietario: ${r.meta.owner}
+Ubicación: ${r.meta.location}
+Área: ${(r.area/10000).toFixed(4)} Ha
+Perímetro: ${r.perimeter.toFixed(2)} m
+Fecha: ${r.meta.date}</description>
+<Style id="parcel"><LineStyle><color>ff00a67d</color><width>3</width></LineStyle><PolyStyle><color>4000a67d</color></PolyStyle></Style>
+<Style id="vertex"><IconStyle><Icon><href>http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png</href></Icon><scale>0.7</scale><color>ff0000ff</color></IconStyle></Style>
+<Style id="lot"><LineStyle><color>ff00ffff</color><width>2</width></LineStyle><PolyStyle><color>3000ffff</color></PolyStyle></Style>
+<Folder><n>Parcela</n>
+<Placemark>
+<n>${r.meta.title}</n>
+<description><![CDATA[${r.meta.title}
+Propietario: ${r.meta.owner}
+Ubicación: ${r.meta.location}
+Catastro: ${r.meta.catastro}
+Área: ${(r.area/10000).toFixed(4)} Ha (${r.area.toFixed(2)} m²)
+Perímetro: ${r.perimeter.toFixed(2)} m
+Vértices: ${r.numVertices}
+Zona UTM: ${r.zone}
+Escala: 1:${r.meta.scale}
+
+COORDENADAS UTM:
+${vertDesc}
+
+LADOS:
+${edgeDesc}
+
+Profesional: ${r.meta.prof} - ${r.meta.civ}
+Fecha: ${r.meta.date}]]></description>
+<styleUrl>#parcel</styleUrl>
+<Polygon><outerBoundaryIs><LinearRing><coordinates>${kmlCoords}</coordinates></LinearRing></outerBoundaryIs></Polygon>
+</Placemark>
+</Folder>
+<Folder><n>Vértices</n>\n`;
+            r.vertices.forEach(v => {
+                kml += `<Placemark><n>V${v.n}</n><description>Lat: ${v.lat.toFixed(6)} Lon: ${v.lon.toFixed(6)}
+UTM: E${v.utmE.toFixed(2)} N${v.utmN.toFixed(2)}</description><styleUrl>#vertex</styleUrl>
+<Point><coordinates>${v.lon},${v.lat},0</coordinates></Point></Placemark>\n`;
+            });
+            kml += `</Folder>\n`;
+            if (r.lotsInfo.length > 0) {
+                kml += `<Folder><n>Lotes (${r.lotsInfo.length})</n>\n`;
+                State.blocks.forEach((b, i) => {
+                    const lc = b.geo.geometry.coordinates[0].map(c => `${c[0]},${c[1]},0`).join(' ');
+                    const l = r.lotsInfo[i];
+                    kml += `<Placemark><n>Lote ${b.id}</n><description>Área: ${(l.area/10000).toFixed(4)} Ha
+Perímetro: ${l.perim.toFixed(2)} m</description><styleUrl>#lot</styleUrl>
+<Polygon><outerBoundaryIs><LinearRing><coordinates>${lc}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>\n`;
+                });
+                kml += `</Folder>\n`;
+            }
+            kml += `</Document>\n</kml>`;
+            download(kml, `plano_topo_${Date.now()}.kml`, 'application/vnd.google-earth.kml+xml');
+            Toast.show('KML exportado', 'success');
+        },
+        // ========== EXPORTAR GeoJSON ==========
+        exportGeoJSON() {
+            if (!this.results) return Toast.show('Calcula primero', 'error');
+            const r = this.results;
+            const features = [{
+                type: 'Feature',
+                properties: {
+                    type: 'parcela', title: r.meta.title, owner: r.meta.owner,
+                    location: r.meta.location, catastro: r.meta.catastro,
+                    area_m2: r.area, area_ha: r.area / 10000, perimeter_m: r.perimeter,
+                    num_vertices: r.numVertices, utm_zone: r.zone,
+                    scale: '1:' + r.meta.scale, prof: r.meta.prof, civ: r.meta.civ,
+                    vertices: r.vertices.map(v => ({ n: v.n, E: v.utmE, N: v.utmN })),
+                    edges: r.edges.map(e => ({ side: `${e.from}-${e.to}`, dist_m: e.dist, az: e.az, rumbo: e.rumbo }))
+                },
+                geometry: State.polygon ? State.polygon.geometry : State.blocks[0].geo.geometry
+            }];
+            r.vertices.forEach(v => {
+                features.push({
+                    type: 'Feature',
+                    properties: { type: 'vertex', n: v.n, utmE: v.utmE, utmN: v.utmN },
+                    geometry: { type: 'Point', coordinates: [v.lon, v.lat] }
+                });
+            });
+            if (r.lotsInfo.length > 0) {
+                State.blocks.forEach((b, i) => {
+                    const l = r.lotsInfo[i];
+                    features.push({
+                        type: 'Feature',
+                        properties: { type: 'lote', id: b.id, area_m2: l.area, area_ha: l.area / 10000, perimeter_m: l.perim },
+                        geometry: b.geo.geometry
+                    });
+                });
+            }
+            const geojson = {
+                type: 'FeatureCollection', name: r.meta.title,
+                crs: { type: 'name', properties: { name: 'urn:ogc:def:crs:OGC:1.3:CRS84' } },
+                properties: { software: 'WIN-TEL GEOMATICS PRO v30', date: r.meta.dateISO },
+                features
+            };
+            download(JSON.stringify(geojson, null, 2), `plano_topo_${Date.now()}.geojson`, 'application/json');
+            Toast.show('GeoJSON exportado', 'success');
+        },
+        // ========== EXPORTAR DXF ==========
+        exportDXF() {
+            if (!this.results) return Toast.show('Calcula primero', 'error');
+            const r = this.results;
+            let dxf = `0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1014\n9\n$INSUNITS\n70\n6\n0\nENDSEC\n0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nLAYER\n70\n4\n`;
+            dxf += `0\nLAYER\n2\nPARCELA\n70\n0\n62\n3\n6\nCONTINUOUS\n`;
+            dxf += `0\nLAYER\n2\nVERTICES\n70\n0\n62\n1\n6\nCONTINUOUS\n`;
+            dxf += `0\nLAYER\n2\nETIQUETAS\n70\n0\n62\n7\n6\nCONTINUOUS\n`;
+            dxf += `0\nLAYER\n2\nLOTES\n70\n0\n62\n5\n6\nCONTINUOUS\n`;
+            dxf += `0\nENDTAB\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n`;
+            // Parcela polyline in UTM
+            dxf += `0\nPOLYLINE\n8\nPARCELA\n66\n1\n70\n1\n`;
+            r.vertices.forEach(v => {
+                dxf += `0\nVERTEX\n8\nPARCELA\n10\n${v.utmE.toFixed(3)}\n20\n${v.utmN.toFixed(3)}\n30\n0\n`;
+            });
+            // Close polyline
+            dxf += `0\nVERTEX\n8\nPARCELA\n10\n${r.vertices[0].utmE.toFixed(3)}\n20\n${r.vertices[0].utmN.toFixed(3)}\n30\n0\n`;
+            dxf += `0\nSEQEND\n8\nPARCELA\n`;
+            // Vertex points + labels
+            r.vertices.forEach(v => {
+                dxf += `0\nPOINT\n8\nVERTICES\n10\n${v.utmE.toFixed(3)}\n20\n${v.utmN.toFixed(3)}\n30\n0\n`;
+                dxf += `0\nTEXT\n8\nETIQUETAS\n10\n${(v.utmE + 2).toFixed(3)}\n20\n${(v.utmN + 2).toFixed(3)}\n30\n0\n40\n2\n1\nV${v.n}\n`;
+            });
+            // Edge distance labels
+            r.edges.forEach((e, i) => {
+                const v1 = r.vertices[e.from - 1], v2 = r.vertices[(e.to - 1) % r.vertices.length];
+                if (v1 && v2) {
+                    const mx = (v1.utmE + v2.utmE) / 2, my = (v1.utmN + v2.utmN) / 2;
+                    dxf += `0\nTEXT\n8\nETIQUETAS\n10\n${mx.toFixed(3)}\n20\n${my.toFixed(3)}\n30\n0\n40\n1.5\n1\n${e.dist.toFixed(2)}m\n`;
+                }
+            });
+            // Lots
+            if (r.lotsInfo.length > 0) {
+                State.blocks.forEach((b, i) => {
+                    const lCoords = b.geo.geometry.coordinates[0];
+                    const lZone = UTM.getZone(lCoords[0][0]);
+                    dxf += `0\nPOLYLINE\n8\nLOTES\n66\n1\n70\n1\n`;
+                    lCoords.forEach(c => {
+                        const utm = UTM.fromLatLon(c[0], c[1], lZone);
+                        dxf += `0\nVERTEX\n8\nLOTES\n10\n${utm[0].toFixed(3)}\n20\n${utm[1].toFixed(3)}\n30\n0\n`;
+                    });
+                    dxf += `0\nSEQEND\n8\nLOTES\n`;
+                });
+            }
+            dxf += `0\nENDSEC\n0\nEOF`;
+            download(dxf, `plano_topo_${Date.now()}.dxf`, 'application/dxf');
+            Toast.show('DXF exportado (UTM)', 'success');
+        },
+        // ========== EXPORTAR CSV ==========
+        exportCSV() {
+            if (!this.results) return Toast.show('Calcula primero', 'error');
+            const r = this.results;
+            let csv = `PLANO TOPOGRÁFICO - WIN-TEL GEOMATICS PRO v30\n`;
+            csv += `Título,${r.meta.title}\nPropietario,${r.meta.owner}\nUbicación,${r.meta.location}\n`;
+            csv += `Catastro,${r.meta.catastro}\nFecha,${r.meta.date}\n`;
+            csv += `Profesional,${r.meta.prof}\nColegiatura,${r.meta.civ}\n`;
+            csv += `Escala,1:${r.meta.scale}\nFormato,${r.meta.format}\n\n`;
+            csv += `RESUMEN\nÁrea (Ha),${(r.area/10000).toFixed(4)}\nÁrea (m²),${r.area.toFixed(2)}\n`;
+            csv += `Perímetro (m),${r.perimeter.toFixed(2)}\nVértices,${r.numVertices}\n`;
+            csv += `Zona UTM,${r.zone}\n`;
+            csv += `Ancho aprox (m),${r.widthM.toFixed(1)}\nAlto aprox (m),${r.heightM.toFixed(1)}\n`;
+            csv += `Centroide UTM E,${r.centroidUTM[0].toFixed(2)}\nCentroide UTM N,${r.centroidUTM[1].toFixed(2)}\n\n`;
+            csv += `COORDENADAS UTM\nVértice,Latitud,Longitud,UTM_Este,UTM_Norte\n`;
+            r.vertices.forEach(v => {
+                csv += `${v.n},${v.lat.toFixed(6)},${v.lon.toFixed(6)},${v.utmE.toFixed(2)},${v.utmN.toFixed(2)}\n`;
+            });
+            csv += `\nLADOS - DISTANCIAS Y RUMBOS\nLado,Distancia_m,Azimut_deg,Rumbo\n`;
+            r.edges.forEach(e => {
+                csv += `${e.from}-${e.to},${e.dist.toFixed(2)},${e.az.toFixed(2)},${e.rumbo}\n`;
+            });
+            if (r.lotsInfo.length > 0) {
+                csv += `\nSUBDIVISIONES (${r.lotsInfo.length} lotes)\nLote,Área_Ha,Área_m2,Perímetro_m,Vértices\n`;
+                r.lotsInfo.forEach(l => {
+                    csv += `${l.id},${(l.area/10000).toFixed(4)},${l.area.toFixed(2)},${l.perim.toFixed(2)},${l.verts.length}\n`;
+                });
+                csv += `\nDETALLE LOTES - COORDENADAS UTM\n`;
+                r.lotsInfo.forEach(l => {
+                    csv += `\nLOTE ${l.id}\nVértice,UTM_Este,UTM_Norte\n`;
+                    l.verts.forEach(v => { csv += `${v.n},${v.utmE.toFixed(2)},${v.utmN.toFixed(2)}\n`; });
+                });
+            }
+            download(csv, `plano_topo_${Date.now()}.csv`, 'text/csv');
+            Toast.show('CSV exportado', 'success');
+        },
+        // ========== EXPORTAR GPX ==========
+        exportGPX() {
+            if (!this.results) return Toast.show('Calcula primero', 'error');
+            const r = this.results;
+            let gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="WIN-TEL GEOMATICS PRO v30" xmlns="http://www.topografix.com/GPX/1/1">
+<metadata>
+    <n>${r.meta.title}</n>
+    <desc>Propietario: ${r.meta.owner} | Área: ${(r.area/10000).toFixed(4)} Ha</desc>
+    <time>${r.meta.dateISO}</time>
+</metadata>\n`;
+            r.vertices.forEach(v => {
+                gpx += `<wpt lat="${v.lat.toFixed(8)}" lon="${v.lon.toFixed(8)}">
+    <n>V${v.n}</n>
+    <desc>UTM: E${v.utmE.toFixed(2)} N${v.utmN.toFixed(2)}</desc>
+    <sym>Flag, Blue</sym>
+</wpt>\n`;
+            });
+            gpx += `<trk><n>Perímetro</n><trkseg>\n`;
+            r.coords.forEach(c => { gpx += `    <trkpt lat="${c[1].toFixed(8)}" lon="${c[0].toFixed(8)}"></trkpt>\n`; });
+            gpx += `</trkseg></trk>\n</gpx>`;
+            download(gpx, `plano_topo_${Date.now()}.gpx`, 'application/gpx+xml');
+            Toast.show('GPX exportado', 'success');
+        },
+        // ========== EXPORTAR PDF (Plano Profesional) ==========
+        exportPDF() {
+            if (!this.results) return Toast.show('Calcula primero', 'error');
+            if (typeof jspdf === 'undefined') return Toast.show('PDF no disponible', 'error');
+            const r = this.results;
             const { jsPDF } = jspdf;
-            const format = $('plano-format')?.value || 'A3';
+            const format = r.meta.format;
             const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format });
-            const pageW = doc.internal.pageSize.getWidth();
-            const pageH = doc.internal.pageSize.getHeight();
-            
-            // Marco
-            doc.setDrawColor(0); doc.setLineWidth(0.8);
-            doc.rect(10, 10, pageW-20, pageH-20);
+            const W = doc.internal.pageSize.getWidth();
+            const H = doc.internal.pageSize.getHeight();
+            // ===== PAGE 1: PLANO CON DIBUJO =====
+            // Marcos
+            doc.setDrawColor(0); doc.setLineWidth(0.8); doc.rect(10, 10, W - 20, H - 20);
+            doc.setLineWidth(0.3); doc.rect(15, 15, W - 30, H - 70);
+            // Cajetín profesional
+            const cajY = H - 52;
+            doc.setLineWidth(0.5); doc.rect(15, cajY, W - 30, 42);
             doc.setLineWidth(0.3);
-            doc.rect(15, 15, pageW-30, pageH-70);
-            
-            // Cajetín
-            const cajY = pageH - 50;
-            doc.setLineWidth(0.5);
-            doc.rect(15, cajY, pageW-30, 40);
-            doc.line(15, cajY+10, pageW-15, cajY+10);
-            doc.line(15, cajY+20, pageW-15, cajY+20);
-            doc.line(pageW-80, cajY, pageW-80, cajY+40);
-            
-            // Contenido cajetín
+            doc.line(15, cajY + 10, W - 15, cajY + 10);
+            doc.line(15, cajY + 20, W - 15, cajY + 20);
+            doc.line(15, cajY + 30, W - 15, cajY + 30);
+            doc.line(W - 100, cajY, W - 100, cajY + 42);
+            doc.line(W - 50, cajY + 10, W - 50, cajY + 42);
+            // Cajetín contenido
             doc.setFontSize(12); doc.setFont('helvetica', 'bold');
-            doc.text($('plano-title')?.value || 'PLANO TOPOGRÁFICO', (pageW-80)/2+15, cajY+7, { align: 'center' });
+            doc.text(r.meta.title, (W - 100) / 2 + 15, cajY + 7, { align: 'center' });
             doc.setFontSize(9); doc.setFont('helvetica', 'normal');
-            doc.text(`PROPIETARIO: ${$('plano-owner')?.value || ''}`, 20, cajY+17);
-            doc.text(`UBICACIÓN: ${$('plano-location')?.value || ''}`, 20, cajY+27);
-            doc.text(`PROFESIONAL: ${$('plano-prof')?.value || ''}  COLEGIATURA: ${$('plano-civ')?.value || ''}`, 20, cajY+37);
-            doc.setFontSize(10);
-            doc.text(`ESCALA: 1:${$('plano-scale')?.value || '1000'}`, pageW-75, cajY+9);
-            doc.text(`FECHA: ${new Date().toLocaleDateString('es-ES')}`, pageW-75, cajY+19);
-            doc.text('WIN-TEL v30', pageW-75, cajY+38);
-            
+            doc.text(`PROPIETARIO: ${r.meta.owner}`, 20, cajY + 17);
+            doc.text(`UBICACIÓN: ${r.meta.location}`, 20, cajY + 27);
+            doc.text(`PROFESIONAL: ${r.meta.prof}  |  ${r.meta.civ}`, 20, cajY + 37);
+            if (r.meta.catastro) doc.text(`CATASTRO: ${r.meta.catastro}`, 20, cajY + 41);
+            doc.setFontSize(9);
+            doc.text(`ESCALA`, W - 97, cajY + 7); doc.setFont('helvetica', 'bold');
+            doc.text(`1:${r.meta.scale}`, W - 97, cajY + 14);
+            doc.setFont('helvetica', 'normal');
+            doc.text(`FECHA`, W - 97, cajY + 24); doc.setFont('helvetica', 'bold');
+            doc.text(r.meta.date, W - 97, cajY + 31);
+            doc.setFont('helvetica', 'normal');
+            doc.text(`ÁREA`, W - 47, cajY + 17); doc.setFont('helvetica', 'bold');
+            doc.text(`${(r.area / 10000).toFixed(4)} Ha`, W - 47, cajY + 24);
+            doc.setFont('helvetica', 'normal');
+            doc.text(`FORMATO: ${format}`, W - 97, cajY + 40);
+            doc.setFontSize(8); doc.text('WIN-TEL GEOMATICS PRO v30', W - 47, cajY + 40);
             // Norte
-            doc.setFillColor(0);
-            doc.triangle(pageW-40, 25, pageW-45, 40, pageW-35, 40, 'F');
+            doc.setFillColor(0); doc.triangle(W - 35, 22, W - 40, 37, W - 30, 37, 'F');
             doc.setFontSize(10); doc.setFont('helvetica', 'bold');
-            doc.text('N', pageW-40, 22, { align: 'center' });
-            
-            // Polígono
+            doc.text('N', W - 35, 19, { align: 'center' });
+            // Dibujo del polígono
             const target = State.polygon || State.blocks[0]?.geo;
             if (target) {
                 const coords = target.geometry.coordinates[0];
                 const bbox = turf.bbox(target);
-                const drawW = pageW - 140, drawH = cajY - 55;
-                const scaleX = drawW / ((bbox[2]-bbox[0]) * 111320);
-                const scaleY = drawH / ((bbox[3]-bbox[1]) * 110540);
-                const scale = Math.min(scaleX, scaleY) * 0.85;
-                const centerX = 25 + drawW/2, centerY = 25 + drawH/2;
-                const geoCX = (bbox[0]+bbox[2])/2, geoCY = (bbox[1]+bbox[3])/2;
-                
+                const drawAreaW = W - 160, drawAreaH = cajY - 25;
+                const scaleX = drawAreaW / ((bbox[2] - bbox[0]) * 111320);
+                const scaleY = drawAreaH / ((bbox[3] - bbox[1]) * 110540);
+                const drawScale = Math.min(scaleX, scaleY) * 0.80;
+                const cx = 25 + drawAreaW / 2, cy = 20 + drawAreaH / 2;
+                const gcx = (bbox[0] + bbox[2]) / 2, gcy = (bbox[1] + bbox[3]) / 2;
                 const pts = coords.map(c => [
-                    centerX + (c[0]-geoCX)*111320*scale,
-                    centerY - (c[1]-geoCY)*110540*scale
+                    cx + (c[0] - gcx) * 111320 * drawScale,
+                    cy - (c[1] - gcy) * 110540 * drawScale
                 ]);
-                
-                doc.setFillColor(220, 255, 220);
-                doc.setDrawColor(0); doc.setLineWidth(0.5);
-                for (let i = 0; i < pts.length-1; i++) {
-                    doc.line(pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1]);
+                // Fill polygon
+                doc.setFillColor(230, 255, 230); doc.setDrawColor(0, 120, 60); doc.setLineWidth(0.6);
+                const xArr = pts.map(p => p[0]), yArr = pts.map(p => p[1]);
+                doc.lines(pts.slice(1).map((p, i) => [p[0] - pts[i][0], p[1] - pts[i][1]]), pts[0][0], pts[0][1], [1, 1], 'DF');
+                // Vertex markers + labels
+                doc.setFont('helvetica', 'bold');
+                for (let i = 0; i < pts.length - 1; i++) {
+                    doc.setFillColor(255, 0, 0); doc.circle(pts[i][0], pts[i][1], 1.5, 'F');
+                    doc.setFontSize(7); doc.setTextColor(200, 0, 0);
+                    doc.text(`V${i + 1}`, pts[i][0] + 3, pts[i][1] - 2);
                 }
-                
-                doc.setFontSize(7); doc.setFont('helvetica', 'bold');
-                for (let i = 0; i < pts.length-1; i++) {
-                    doc.setFillColor(255, 0, 0);
-                    doc.circle(pts[i][0], pts[i][1], 1.5, 'F');
-                    doc.text((i+1).toString(), pts[i][0]+3, pts[i][1]-2);
+                // Edge distance labels
+                doc.setTextColor(0, 0, 150); doc.setFontSize(6); doc.setFont('helvetica', 'normal');
+                for (let i = 0; i < pts.length - 1; i++) {
+                    const nx = i + 1 < pts.length - 1 ? i + 1 : 0;
+                    const mx = (pts[i][0] + pts[nx][0]) / 2, my = (pts[i][1] + pts[nx][1]) / 2;
+                    if (r.edges[i]) doc.text(`${r.edges[i].dist.toFixed(2)}m`, mx + 1, my - 1);
                 }
-                
-                // Cuadro coordenadas
-                const area = turf.area(target);
-                doc.setFontSize(8); doc.setFont('helvetica', 'bold');
-                doc.text('COORDENADAS UTM', pageW-90, 25);
-                doc.setFontSize(7); doc.setFont('helvetica', 'normal');
-                let cy = 32;
-                for (let i = 0; i < Math.min(coords.length-1, 12); i++) {
-                    const utm = UTM.fromLatLon(coords[i][1], coords[i][0]);
-                    doc.text(`${i+1}: E${utm.easting.toFixed(1)} N${utm.northing.toFixed(1)}`, pageW-90, cy);
-                    cy += 5;
+                doc.setTextColor(0);
+                // Lots drawing
+                if (State.blocks.length > 0) {
+                    doc.setDrawColor(100, 100, 255); doc.setLineWidth(0.3);
+                    State.blocks.forEach(b => {
+                        const lc = b.geo.geometry.coordinates[0].map(c => [
+                            cx + (c[0] - gcx) * 111320 * drawScale,
+                            cy - (c[1] - gcy) * 110540 * drawScale
+                        ]);
+                        for (let i = 0; i < lc.length - 1; i++) doc.line(lc[i][0], lc[i][1], lc[i + 1][0], lc[i + 1][1]);
+                    });
                 }
-                doc.text(`ÁREA: ${(area/10000).toFixed(4)} Ha`, pageW-90, cajY-15);
             }
-            
-            doc.save(`plano_${Date.now()}.pdf`);
-            Loading.hide();
-            Toast.show('Plano PDF generado', 'success');
+            // Coordinate table in page 1 right side
+            let ty = 20;
+            doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(0);
+            doc.text('COORDENADAS UTM', W - 115, ty); ty += 3;
+            doc.text(`Zona: ${r.zone}`, W - 115, ty + 3); ty += 7;
+            doc.setFontSize(6); doc.setFont('helvetica', 'bold');
+            doc.text('V', W - 115, ty); doc.text('ESTE', W - 105, ty); doc.text('NORTE', W - 85, ty); ty += 4;
+            doc.setFont('helvetica', 'normal');
+            const maxVerts = Math.min(r.vertices.length, Math.floor((cajY - 50) / 4));
+            for (let i = 0; i < maxVerts; i++) {
+                const v = r.vertices[i];
+                doc.text(`${v.n}`, W - 115, ty);
+                doc.text(`${v.utmE.toFixed(2)}`, W - 105, ty);
+                doc.text(`${v.utmN.toFixed(2)}`, W - 85, ty);
+                ty += 4;
+            }
+            if (r.vertices.length > maxVerts) {
+                doc.text(`... +${r.vertices.length - maxVerts} más`, W - 115, ty); ty += 6;
+            } else ty += 4;
+            doc.setFont('helvetica', 'bold'); doc.text(`ÁREA: ${(r.area / 10000).toFixed(4)} Ha`, W - 115, ty); ty += 4;
+            doc.text(`PER: ${r.perimeter.toFixed(2)} m`, W - 115, ty);
+            // ===== PAGE 2: TABLAS COMPLETAS =====
+            doc.addPage(format, 'portrait');
+            const W2 = doc.internal.pageSize.getWidth();
+            let py = 15;
+            doc.setFontSize(14); doc.setTextColor(139, 92, 246); doc.setFont('helvetica', 'bold');
+            doc.text('INFORME TOPOGRÁFICO', W2 / 2, py, { align: 'center' }); py += 6;
+            doc.setFontSize(10); doc.setTextColor(100); doc.setFont('helvetica', 'normal');
+            doc.text(r.meta.title, W2 / 2, py, { align: 'center' }); py += 5;
+            doc.text(`${r.meta.date} - WIN-TEL GEOMATICS PRO v30`, W2 / 2, py, { align: 'center' }); py += 8;
+            doc.setDrawColor(139, 92, 246); doc.setLineWidth(0.5); doc.line(15, py, W2 - 15, py); py += 8;
+            // General data
+            doc.setFontSize(11); doc.setTextColor(0); doc.setFont('helvetica', 'bold');
+            doc.text('DATOS GENERALES', 15, py); py += 6;
+            doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+            const genData = [
+                `Propietario: ${r.meta.owner}`, `Ubicación: ${r.meta.location}`,
+                `Catastro: ${r.meta.catastro}`, `Profesional: ${r.meta.prof} - ${r.meta.civ}`,
+                `Área: ${(r.area / 10000).toFixed(4)} Ha (${r.area.toFixed(2)} m²)`,
+                `Perímetro: ${r.perimeter.toFixed(2)} m`, `Vértices: ${r.numVertices}`,
+                `Zona UTM: ${r.zone}`, `Dimensiones aprox: ${r.widthM.toFixed(1)} × ${r.heightM.toFixed(1)} m`,
+                `Centroide UTM: E${r.centroidUTM[0].toFixed(2)} N${r.centroidUTM[1].toFixed(2)}`
+            ].filter(d => !d.endsWith(': '));
+            genData.forEach(d => { doc.text(d, 20, py); py += 5; }); py += 4;
+            // UTM coordinate table
+            doc.setFontSize(11); doc.setFont('helvetica', 'bold');
+            doc.text('CUADRO DE COORDENADAS UTM', 15, py); py += 6;
+            doc.setFontSize(8); doc.setFont('helvetica', 'bold');
+            doc.text('VÉRTICE', 18, py); doc.text('LATITUD', 42, py); doc.text('LONGITUD', 72, py);
+            doc.text('UTM ESTE', 105, py); doc.text('UTM NORTE', 140, py); py += 1;
+            doc.setLineWidth(0.2); doc.line(15, py, W2 - 15, py); py += 4;
+            doc.setFont('helvetica', 'normal');
+            r.vertices.forEach(v => {
+                if (py > (format === 'A3' ? 400 : 270)) { doc.addPage(format, 'portrait'); py = 20; }
+                doc.text(`V${v.n}`, 22, py); doc.text(v.lat.toFixed(6), 42, py);
+                doc.text(v.lon.toFixed(6), 72, py); doc.text(v.utmE.toFixed(2), 105, py);
+                doc.text(v.utmN.toFixed(2), 140, py); py += 4.5;
+            }); py += 6;
+            // Sides table
+            if (py > (format === 'A3' ? 380 : 250)) { doc.addPage(format, 'portrait'); py = 20; }
+            doc.setFontSize(11); doc.setFont('helvetica', 'bold');
+            doc.text('CUADRO DE DISTANCIAS Y RUMBOS', 15, py); py += 6;
+            doc.setFontSize(8); doc.setFont('helvetica', 'bold');
+            doc.text('LADO', 18, py); doc.text('DISTANCIA (m)', 42, py);
+            doc.text('AZIMUT', 85, py); doc.text('RUMBO', 115, py); py += 1;
+            doc.line(15, py, W2 - 15, py); py += 4;
+            doc.setFont('helvetica', 'normal');
+            r.edges.forEach(e => {
+                if (py > (format === 'A3' ? 400 : 270)) { doc.addPage(format, 'portrait'); py = 20; }
+                doc.text(`${e.from} - ${e.to}`, 22, py); doc.text(e.dist.toFixed(2), 50, py);
+                doc.text(`${e.az.toFixed(2)}°`, 88, py); doc.text(e.rumbo, 115, py); py += 4.5;
+            }); py += 4;
+            doc.setFont('helvetica', 'bold');
+            doc.text(`PERÍMETRO TOTAL: ${r.perimeter.toFixed(2)} m`, 20, py); py += 8;
+            // Lots detail
+            if (r.lotsInfo.length > 0) {
+                if (py > (format === 'A3' ? 370 : 240)) { doc.addPage(format, 'portrait'); py = 20; }
+                doc.setFontSize(11); doc.setFont('helvetica', 'bold');
+                doc.text(`SUBDIVISIONES (${r.lotsInfo.length} lotes)`, 15, py); py += 6;
+                doc.setFontSize(8); doc.setFont('helvetica', 'bold');
+                doc.text('LOTE', 18, py); doc.text('ÁREA (Ha)', 42, py);
+                doc.text('ÁREA (m²)', 72, py); doc.text('PERÍMETRO', 105, py);
+                doc.text('VÉRTICES', 140, py); py += 1;
+                doc.line(15, py, W2 - 15, py); py += 4;
+                doc.setFont('helvetica', 'normal');
+                r.lotsInfo.forEach(l => {
+                    if (py > (format === 'A3' ? 400 : 270)) { doc.addPage(format, 'portrait'); py = 20; }
+                    doc.text(`${l.id}`, 22, py); doc.text(`${(l.area / 10000).toFixed(4)}`, 45, py);
+                    doc.text(`${l.area.toFixed(2)}`, 72, py); doc.text(`${l.perim.toFixed(2)} m`, 105, py);
+                    doc.text(`${l.verts.length}`, 145, py); py += 4.5;
+                });
+            }
+            // Footer
+            doc.setFontSize(7); doc.setTextColor(150);
+            doc.text('Generado por WIN-TEL GEOMATICS PRO v30 - WindowsTelecom C.A.', W2 / 2, doc.internal.pageSize.getHeight() - 8, { align: 'center' });
+            doc.save(`plano_topo_${Date.now()}.pdf`);
+            Toast.show('Plano PDF generado (2 páginas)', 'success');
+        },
+        // ========== EXPORTAR TXT ==========
+        exportTXT() {
+            if (!this.results) return Toast.show('Calcula primero', 'error');
+            const r = this.results;
+            let txt = `╔══════════════════════════════════════════════════════════════╗
+║          INFORME TOPOGRÁFICO PROFESIONAL                    ║
+║          WIN-TEL GEOMATICS PRO v30                          ║
+╚══════════════════════════════════════════════════════════════╝
+
+Título: ${r.meta.title}
+Fecha: ${r.meta.date}
+
+═══════════════════════════════════════════════════════════════
+                    DATOS GENERALES
+═══════════════════════════════════════════════════════════════
+
+Propietario ................ ${r.meta.owner}
+Ubicación .................. ${r.meta.location}
+Catastro/Expediente ........ ${r.meta.catastro}
+Profesional ................ ${r.meta.prof}
+Colegiatura ................ ${r.meta.civ}
+Escala ..................... 1:${r.meta.scale}
+Formato .................... ${r.meta.format}
+
+═══════════════════════════════════════════════════════════════
+                   RESUMEN TOPOGRÁFICO
+═══════════════════════════════════════════════════════════════
+
+Área total ................. ${(r.area/10000).toFixed(4)} Ha (${r.area.toFixed(2)} m²)
+Perímetro .................. ${r.perimeter.toFixed(2)} m
+Vértices ................... ${r.numVertices}
+Zona UTM ................... ${r.zone}
+Dimensiones aprox .......... ${r.widthM.toFixed(1)} × ${r.heightM.toFixed(1)} m
+Centroide UTM .............. E ${r.centroidUTM[0].toFixed(2)} N ${r.centroidUTM[1].toFixed(2)}
+
+═══════════════════════════════════════════════════════════════
+              CUADRO DE COORDENADAS UTM
+═══════════════════════════════════════════════════════════════
+
+${'VÉRT'.padEnd(6)}${'LATITUD'.padEnd(14)}${'LONGITUD'.padEnd(14)}${'UTM ESTE'.padEnd(14)}${'UTM NORTE'.padEnd(14)}
+${'─'.repeat(62)}
+${r.vertices.map(v => `V${v.n}`.padEnd(6) + v.lat.toFixed(6).padEnd(14) + v.lon.toFixed(6).padEnd(14) + v.utmE.toFixed(2).padEnd(14) + v.utmN.toFixed(2).padEnd(14)).join('\n')}
+
+═══════════════════════════════════════════════════════════════
+             CUADRO DE DISTANCIAS Y RUMBOS
+═══════════════════════════════════════════════════════════════
+
+${'LADO'.padEnd(8)}${'DISTANCIA'.padEnd(14)}${'AZIMUT'.padEnd(12)}${'RUMBO'.padEnd(20)}
+${'─'.repeat(54)}
+${r.edges.map(e => `${e.from}-${e.to}`.padEnd(8) + `${e.dist.toFixed(2)} m`.padEnd(14) + `${e.az.toFixed(2)}°`.padEnd(12) + e.rumbo.padEnd(20)).join('\n')}
+${'─'.repeat(54)}
+${'TOTAL'.padEnd(8)}${r.perimeter.toFixed(2)} m
+`;
+            if (r.lotsInfo.length > 0) {
+                txt += `\n═══════════════════════════════════════════════════════════════
+              SUBDIVISIONES (${r.lotsInfo.length} lotes)
+═══════════════════════════════════════════════════════════════
+
+${'LOTE'.padEnd(6)}${'ÁREA Ha'.padEnd(14)}${'ÁREA m²'.padEnd(14)}${'PERÍMETRO'.padEnd(14)}${'VÉRTICES'.padEnd(10)}
+${'─'.repeat(58)}
+${r.lotsInfo.map(l => `${l.id}`.padEnd(6) + `${(l.area/10000).toFixed(4)}`.padEnd(14) + `${l.area.toFixed(2)}`.padEnd(14) + `${l.perim.toFixed(2)} m`.padEnd(14) + `${l.verts.length}`.padEnd(10)).join('\n')}
+`;
+            }
+            if (r.meta.obs) txt += `\nOBSERVACIONES: ${r.meta.obs}\n`;
+            txt += `
+═══════════════════════════════════════════════════════════════
+         Generado por WIN-TEL GEOMATICS PRO v30
+                  WindowsTelecom C.A.
+               Valencia, Carabobo, Venezuela
+═══════════════════════════════════════════════════════════════
+`;
+            download(txt, `informe_topo_${Date.now()}.txt`, 'text/plain');
+            Toast.show('Informe TXT exportado', 'success');
+        },
+        // ========== COPIAR AL PORTAPAPELES ==========
+        copyToClipboard() {
+            if (!this.results) return Toast.show('Calcula primero', 'error');
+            const r = this.results;
+            let text = `${r.meta.title}\n`;
+            text += `Propietario: ${r.meta.owner} | Ubicación: ${r.meta.location}\n`;
+            text += `Área: ${(r.area / 10000).toFixed(4)} Ha | Perímetro: ${r.perimeter.toFixed(2)} m\n`;
+            text += `Vértices: ${r.numVertices} | Zona UTM: ${r.zone}\n\n`;
+            text += `COORDENADAS UTM:\n`;
+            r.vertices.forEach(v => { text += `V${v.n}: E${v.utmE.toFixed(2)} N${v.utmN.toFixed(2)}\n`; });
+            text += `\nLADOS:\n`;
+            r.edges.forEach(e => { text += `${e.from}-${e.to}: ${e.dist.toFixed(2)}m | Az:${e.az.toFixed(2)}° | ${e.rumbo}\n`; });
+            if (r.lotsInfo.length > 0) {
+                text += `\nLOTES: ${r.lotsInfo.length}\n`;
+                r.lotsInfo.forEach(l => { text += `Lote ${l.id}: ${(l.area / 10000).toFixed(4)} Ha\n`; });
+            }
+            navigator.clipboard.writeText(text).then(() => {
+                Toast.show('Copiado al portapapeles', 'success');
+            }).catch(() => { Toast.show('Error al copiar', 'error'); });
         }
     };
 
     // ========== MÓDULO 3: CALCULADORA MOVIMIENTO DE TIERRAS ==========
     const EarthworkCalc = {
-        panel: null, layer: null, results: null,
+        panel: null, layer: null, results: null, gridPoints: [],
+        // Tipos de suelo con propiedades geotécnicas
+        soilTypes: [
+            { id: 'vegetal', name: 'Capa vegetal', swell: 1.15, compact: 0.95, weight: 1.4, color: '#22c55e' },
+            { id: 'arena', name: 'Arena', swell: 1.12, compact: 0.95, weight: 1.6, color: '#fbbf24' },
+            { id: 'tierra', name: 'Tierra común', swell: 1.25, compact: 0.90, weight: 1.7, color: '#f59e0b' },
+            { id: 'arcilla', name: 'Arcilla', swell: 1.35, compact: 0.85, weight: 1.9, color: '#d97706' },
+            { id: 'grava', name: 'Grava', swell: 1.18, compact: 0.92, weight: 2.0, color: '#a16207' },
+            { id: 'roca_blanda', name: 'Roca blanda', swell: 1.50, compact: 0.88, weight: 2.2, color: '#78716c' },
+            { id: 'roca_dura', name: 'Roca dura', swell: 1.65, compact: 0.85, weight: 2.6, color: '#57534e' }
+        ],
         togglePanel() {
             if (this.panel) { this.panel.remove(); this.panel = null; return; }
-            const html = `<div id="earthwork-panel" class="float-panel" style="top:80px;right:60px;width:340px;">
+            const soilOpts = this.soilTypes.map((s, i) => `<option value="${i}" ${s.id==='tierra'?'selected':''}>${s.name} (Fe=${s.swell})</option>`).join('');
+            const html = `<div id="earthwork-panel" class="float-panel" style="top:80px;right:60px;width:360px;max-height:90vh;overflow-y:auto;">
                 <div class="panel-hdr" style="background:linear-gradient(135deg,rgba(245,158,11,0.3),rgba(217,119,6,0.2));">
                     <div class="panel-title"><i class="fa-solid fa-truck-moving" style="color:#f59e0b;"></i> Movimiento de Tierras</div>
                     <button class="panel-close" onclick="EarthworkCalc.togglePanel()"><i class="fa-solid fa-times"></i></button>
                 </div>
                 <div class="panel-body">
                     <div style="background:rgba(245,158,11,0.15);border:1px solid #f59e0b;border-radius:6px;padding:10px;margin-bottom:12px;">
-                        <div style="font-size:10px;color:#f59e0b;font-weight:700;">🚜 CORTE Y RELLENO</div>
-                        <div style="font-size:9px;color:var(--text-3);">Calcula volúmenes para nivelación</div>
+                        <div style="font-size:10px;color:#f59e0b;font-weight:700;">🚜 CORTE Y RELLENO PROFESIONAL</div>
+                        <div style="font-size:9px;color:var(--text-3);margin-top:3px;">Volúmenes con elevación real, esponjamiento, compactación y costos</div>
                     </div>
                     <div class="form-group"><label class="form-label">Nivel de Proyecto (m)</label>
-                        <input type="number" id="ew-level" class="form-input" placeholder="Automático si vacío" step="0.1">
+                        <input type="number" id="ew-level" class="form-input" placeholder="Vacío = promedio del terreno" step="0.01">
                     </div>
-                    <div class="form-group"><label class="form-label">Esponjamiento</label>
-                        <select id="ew-swell" class="form-input">
-                            <option value="1.0">Sin (1.0)</option><option value="1.25" selected>Tierra (1.25)</option>
-                            <option value="1.35">Arcilla (1.35)</option><option value="1.50">Roca (1.50)</option>
+                    <div class="form-group"><label class="form-label">Tipo de suelo</label>
+                        <select id="ew-soil" class="form-input" onchange="EarthworkCalc.updateSoilInfo()">${soilOpts}</select>
+                    </div>
+                    <div id="ew-soil-info" style="font-size:9px;color:var(--text-3);padding:4px 8px;margin:-6px 0 8px;"></div>
+                    <div class="form-group"><label class="form-label">Resolución de análisis</label>
+                        <select id="ew-resolution" class="form-input">
+                            <option value="5">Muy Alta (5m) - lento</option>
+                            <option value="10" selected>Alta (10m)</option>
+                            <option value="20">Media (20m) - rápido</option>
+                            <option value="30">Baja (30m) - muy rápido</option>
                         </select>
                     </div>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
                         <div class="form-group"><label class="form-label">$/m³ Corte</label>
-                            <input type="number" id="ew-cost-cut" class="form-input" value="15">
+                            <input type="number" id="ew-cost-cut" class="form-input" value="15" step="1">
                         </div>
                         <div class="form-group"><label class="form-label">$/m³ Relleno</label>
-                            <input type="number" id="ew-cost-fill" class="form-input" value="20">
+                            <input type="number" id="ew-cost-fill" class="form-input" value="20" step="1">
+                        </div>
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                        <div class="form-group"><label class="form-label">$/m³ Transporte</label>
+                            <input type="number" id="ew-cost-haul" class="form-input" value="8" step="1">
+                        </div>
+                        <div class="form-group"><label class="form-label">Dist. botadero (km)</label>
+                            <input type="number" id="ew-haul-dist" class="form-input" value="5" step="0.5" min="0">
                         </div>
                     </div>
                     <button class="btn" onclick="EarthworkCalc.calculate()" style="background:linear-gradient(135deg,#f59e0b,#d97706);">
                         <i class="fa-solid fa-calculator"></i> CALCULAR
                     </button>
                     <button class="btn btn-2" onclick="EarthworkCalc.findOptimal()" style="margin-top:6px;">
-                        <i class="fa-solid fa-magic"></i> Nivel Óptimo
+                        <i class="fa-solid fa-magic"></i> Nivel Óptimo (Balance=0)
+                    </button>
+                    <button class="btn btn-2" onclick="EarthworkCalc.clear()" style="margin-top:4px;">
+                        <i class="fa-solid fa-eraser"></i> Limpiar
                     </button>
                     <div id="ew-results" style="display:none;margin-top:12px;"></div>
                 </div>
             </div>`;
             document.body.insertAdjacentHTML('beforeend', html);
             this.panel = document.getElementById('earthwork-panel');
+            this.updateSoilInfo();
         },
-        async calculate() {
-            if (!State.polygon) return Toast.show('Dibuja un polígono', 'error');
-            Loading.show();
+        updateSoilInfo() {
+            const idx = parseInt($('ew-soil')?.value) || 0;
+            const s = this.soilTypes[idx];
+            const info = $('ew-soil-info');
+            if (info && s) info.innerHTML = `<span style="display:inline-block;width:8px;height:8px;background:${s.color};border-radius:2px;"></span> Esponj: <b>${s.swell}</b> | Compact: <b>${s.compact}</b> | Peso: <b>${s.weight} t/m³</b>`;
+        },
+        async getGridElevations() {
+            if (!State.polygon) throw new Error('No hay polígono');
+            const resolution = parseInt($('ew-resolution')?.value) || 10;
             const bbox = turf.bbox(State.polygon);
-            const cellSize = 10/111320;
+            const cellSize = resolution / 111320;
             const points = [];
             for (let lat = bbox[1]; lat <= bbox[3]; lat += cellSize) {
                 for (let lng = bbox[0]; lng <= bbox[2]; lng += cellSize) {
                     if (turf.booleanPointInPolygon(turf.point([lng, lat]), State.polygon)) {
-                        points.push({ lat, lng, elev: 100 + (Math.random()-0.5)*10 });
+                        points.push({ lat, lng, elev: 0 });
                     }
                 }
             }
-            const elevs = points.map(p => p.elev);
-            const minE = Math.min(...elevs), maxE = Math.max(...elevs), avgE = elevs.reduce((a,b)=>a+b,0)/elevs.length;
-            const level = parseFloat($('ew-level')?.value) || avgE;
-            const swell = parseFloat($('ew-swell')?.value) || 1.25;
-            
-            let cut = 0, fill = 0;
-            this.layer = this.layer || L.layerGroup().addTo(State.map);
-            this.layer.clearLayers();
-            
-            points.forEach(p => {
-                const diff = p.elev - level;
-                if (diff > 0) {
-                    cut += diff * 100;
-                    L.rectangle([[p.lat, p.lng], [p.lat+cellSize, p.lng+cellSize]], {
-                        color: '#ef4444', fillColor: '#ef4444', fillOpacity: Math.min(0.8, diff/5), weight: 0
-                    }).addTo(this.layer);
-                } else {
-                    fill += Math.abs(diff) * 100;
-                    L.rectangle([[p.lat, p.lng], [p.lat+cellSize, p.lng+cellSize]], {
-                        color: '#3b82f6', fillColor: '#3b82f6', fillOpacity: Math.min(0.8, Math.abs(diff)/5), weight: 0
-                    }).addTo(this.layer);
+            if (points.length === 0) throw new Error('Polígono muy pequeño');
+            // Use ElevationService
+            Toast.show(`Obteniendo elevación de ${points.length} puntos...`, 'info');
+            if (typeof ElevationService !== 'undefined') {
+                try {
+                    const batchSize = 100;
+                    for (let i = 0; i < points.length; i += batchSize) {
+                        const batch = points.slice(i, i + batchSize);
+                        const elevs = await ElevationService.getElevationBatch(batch.map(p => ({ lat: p.lat, lng: p.lng })));
+                        elevs.forEach((elev, idx) => { if (batch[idx]) batch[idx].elev = elev || 0; });
+                    }
+                } catch (e) {
+                    console.warn('ElevationService error, using fallback:', e);
+                    const center = turf.centroid(State.polygon).geometry.coordinates;
+                    points.forEach(p => {
+                        p.elev = ElevationService.generateRealisticElevation(p.lat, p.lng);
+                    });
                 }
-            });
-            
-            const cutCost = cut * parseFloat($('ew-cost-cut')?.value || 15);
-            const fillCost = fill * parseFloat($('ew-cost-fill')?.value || 20);
-            this.results = { cut, fill, level, swell, cutCost, fillCost, balance: cut - fill*swell, minE, maxE, avgE };
-            this.showResults();
-            Loading.hide();
-            Toast.show('Cálculo completado', 'success');
+            } else {
+                // Fallback determinístico basado en posición
+                points.forEach(p => {
+                    const base = 150;
+                    p.elev = base + Math.sin(p.lat * 800) * 50 + Math.cos(p.lng * 800) * 40 + Math.sin((p.lat + p.lng) * 300) * 25;
+                });
+            }
+            return { points, cellSize, resolution };
         },
-        findOptimal() {
-            if (!State.polygon) return Toast.show('Dibuja un polígono', 'error');
-            const bbox = turf.bbox(State.polygon);
-            const cellSize = 10/111320;
-            const elevs = [];
-            for (let lat = bbox[1]; lat <= bbox[3]; lat += cellSize) {
-                for (let lng = bbox[0]; lng <= bbox[2]; lng += cellSize) {
-                    if (turf.booleanPointInPolygon(turf.point([lng, lat]), State.polygon)) {
-                        elevs.push(100 + (Math.random()-0.5)*10);
+        async calculate() {
+            if (!State.polygon) return Toast.show('Dibuja un polígono primero', 'error');
+            Loading.show();
+            try {
+                const { points, cellSize, resolution } = await this.getGridElevations();
+                this.gridPoints = points;
+                const areaM2 = turf.area(State.polygon);
+                const areaHa = areaM2 / 10000;
+                const cellAreaM2 = resolution * resolution; // área de cada celda en m²
+                const soilIdx = parseInt($('ew-soil')?.value) || 2;
+                const soil = this.soilTypes[soilIdx];
+                const elevs = points.map(p => p.elev);
+                const minE = Math.min(...elevs), maxE = Math.max(...elevs);
+                const avgE = elevs.reduce((a, b) => a + b, 0) / elevs.length;
+                const stdDev = Math.sqrt(elevs.reduce((sum, e) => sum + Math.pow(e - avgE, 2), 0) / elevs.length);
+                const level = parseFloat($('ew-level')?.value) || avgE;
+                // Calculate cut/fill volumes
+                let cutVol = 0, fillVol = 0, cutCells = 0, fillCells = 0;
+                this.layer = this.layer || L.layerGroup().addTo(State.map);
+                this.layer.clearLayers();
+                points.forEach(p => {
+                    const diff = p.elev - level;
+                    if (diff > 0.01) {
+                        // Corte: volumen in-situ (celda × profundidad)
+                        cutVol += diff * cellAreaM2;
+                        cutCells++;
+                        L.rectangle([[p.lat, p.lng], [p.lat + cellSize, p.lng + cellSize]], {
+                            color: '#ef4444', fillColor: '#ef4444',
+                            fillOpacity: Math.min(0.85, 0.15 + (diff / (maxE - level)) * 0.7), weight: 0
+                        }).bindPopup(`<b style="color:#ef4444;">CORTE</b><br>Elev: ${p.elev.toFixed(2)} m<br>Corte: ${diff.toFixed(2)} m<br>Vol celda: ${(diff * cellAreaM2).toFixed(1)} m³`).addTo(this.layer);
+                    } else if (diff < -0.01) {
+                        const absDiff = Math.abs(diff);
+                        fillVol += absDiff * cellAreaM2;
+                        fillCells++;
+                        L.rectangle([[p.lat, p.lng], [p.lat + cellSize, p.lng + cellSize]], {
+                            color: '#3b82f6', fillColor: '#3b82f6',
+                            fillOpacity: Math.min(0.85, 0.15 + (absDiff / (level - minE)) * 0.7), weight: 0
+                        }).bindPopup(`<b style="color:#3b82f6;">RELLENO</b><br>Elev: ${p.elev.toFixed(2)} m<br>Relleno: ${absDiff.toFixed(2)} m<br>Vol celda: ${(absDiff * cellAreaM2).toFixed(1)} m³`).addTo(this.layer);
                     }
-                }
+                });
+                // Volúmenes calculados
+                const cutSwell = cutVol * soil.swell;              // Corte esponjado (lo que sale del terreno)
+                const fillCompact = fillVol / soil.compact;         // Relleno necesario (material suelto para compactar)
+                const balanceInsitu = cutVol - fillVol;             // Balance en banco
+                const balanceSwell = cutSwell - fillCompact;        // Balance en material suelto
+                const sobrante = Math.max(0, cutSwell - fillCompact); // Material sobrante a botar
+                const faltante = Math.max(0, fillCompact - cutSwell); // Material faltante a importar
+                // Costos
+                const costCut = cutVol * parseFloat($('ew-cost-cut')?.value || 15);
+                const costFill = fillVol * parseFloat($('ew-cost-fill')?.value || 20);
+                const costHaulUnit = parseFloat($('ew-cost-haul')?.value || 8);
+                const haulDist = parseFloat($('ew-haul-dist')?.value || 5);
+                const costHaul = sobrante > 0 ? sobrante * costHaulUnit * haulDist : faltante * costHaulUnit * haulDist;
+                const costTotal = costCut + costFill + costHaul;
+                // Estimación de equipo/tiempo
+                const prodExcavadora = 80;   // m³/hora
+                const prodVolqueta = 12;      // m³ por viaje
+                const viajesVolqueta = Math.ceil((cutVol > fillVol ? sobrante : faltante) / prodVolqueta);
+                const horasExcavadora = cutVol / prodExcavadora;
+                const horasMoto = areaM2 / 500;          // motoniveladora m²/hora
+                const horasCompact = fillVol > 0 ? (fillVol / 150) : 0; // compactador m³/hora
+                // Pendiente promedio
+                let slopeSum = 0, slopeCount = 0;
+                points.forEach((p, i) => {
+                    const neighbors = points.filter(q => {
+                        const d = Math.sqrt(Math.pow(q.lat - p.lat, 2) + Math.pow(q.lng - p.lng, 2));
+                        return d > 0 && d < cellSize * 1.5;
+                    });
+                    if (neighbors.length > 0) {
+                        const maxSlope = Math.max(...neighbors.map(q => Math.abs(q.elev - p.elev) / (Math.sqrt(Math.pow(q.lat - p.lat, 2) + Math.pow(q.lng - p.lng, 2)) * 111320)));
+                        slopeSum += maxSlope * 100;
+                        slopeCount++;
+                    }
+                });
+                const avgSlope = slopeCount > 0 ? slopeSum / slopeCount : 0;
+                // Peso total del material
+                const cutWeight = cutVol * soil.weight;   // toneladas
+                const fillWeight = fillVol * soil.weight;
+                this.results = {
+                    areaM2, areaHa, level, resolution, totalPoints: points.length,
+                    minE, maxE, avgE, stdDev, desnivel: maxE - minE, avgSlope,
+                    soilName: soil.name, soilId: soil.id, swell: soil.swell, compact: soil.compact, soilWeight: soil.weight,
+                    cutVol, fillVol, cutSwell, fillCompact,
+                    balanceInsitu, balanceSwell, sobrante, faltante,
+                    cutCells, fillCells, cutWeight, fillWeight,
+                    costCut, costFill, costHaul, costTotal, haulDist,
+                    horasExcavadora, horasMoto, horasCompact, viajesVolqueta,
+                    prodExcavadora, prodVolqueta
+                };
+                this.showResults();
+                Loading.hide();
+                Toast.show('Cálculo completado', 'success');
+            } catch (e) {
+                Loading.hide();
+                Toast.show('Error: ' + e.message, 'error');
+                console.error(e);
             }
-            const avg = elevs.reduce((a,b)=>a+b,0)/elevs.length;
-            $('ew-level').value = avg.toFixed(2);
-            Toast.show(`Nivel óptimo: ${avg.toFixed(2)} m`, 'success');
-            this.calculate();
+        },
+        async findOptimal() {
+            if (!State.polygon) return Toast.show('Dibuja un polígono primero', 'error');
+            Loading.show();
+            try {
+                const { points, cellSize, resolution } = await this.getGridElevations();
+                this.gridPoints = points;
+                const soilIdx = parseInt($('ew-soil')?.value) || 2;
+                const soil = this.soilTypes[soilIdx];
+                const cellAreaM2 = resolution * resolution;
+                // Búsqueda binaria del nivel óptimo donde cutSwell ≈ fillCompact
+                const elevs = points.map(p => p.elev);
+                let lo = Math.min(...elevs), hi = Math.max(...elevs);
+                for (let iter = 0; iter < 50; iter++) {
+                    const mid = (lo + hi) / 2;
+                    let cutV = 0, fillV = 0;
+                    points.forEach(p => {
+                        const diff = p.elev - mid;
+                        if (diff > 0) cutV += diff * cellAreaM2;
+                        else fillV += Math.abs(diff) * cellAreaM2;
+                    });
+                    const cutS = cutV * soil.swell;
+                    const fillC = fillV / soil.compact;
+                    if (Math.abs(cutS - fillC) < 0.1) break;
+                    if (cutS > fillC) lo = mid; else hi = mid;
+                }
+                const optimal = (lo + hi) / 2;
+                $('ew-level').value = optimal.toFixed(2);
+                Loading.hide();
+                Toast.show(`Nivel óptimo: ${optimal.toFixed(2)} m (balance ≈ 0)`, 'success');
+                this.calculate();
+            } catch (e) {
+                Loading.hide();
+                Toast.show('Error: ' + e.message, 'error');
+            }
         },
         showResults() {
             const r = this.results;
+            if (!r) return;
             const rd = $('ew-results');
-            if (rd) {
-                rd.style.display = 'block';
-                rd.innerHTML = `<div style="background:var(--bg-glass);padding:10px;border-radius:6px;">
-                    <div style="text-align:center;margin-bottom:8px;">
-                        <div style="font-size:12px;color:var(--text-3);">NIVEL: ${r.level.toFixed(2)} m</div>
+            if (!rd) return;
+            rd.style.display = 'block';
+            rd.innerHTML = `<div style="background:linear-gradient(135deg,rgba(245,158,11,0.2),rgba(217,119,6,0.15));border-radius:8px;padding:12px;">
+                <div style="text-align:center;margin-bottom:8px;">
+                    <div style="font-size:10px;color:var(--text-3);">NIVEL DE PROYECTO</div>
+                    <div style="font-size:20px;font-weight:800;color:#f59e0b;">${r.level.toFixed(2)} m</div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                    <div style="text-align:center;background:rgba(239,68,68,0.2);padding:8px;border-radius:4px;">
+                        <div style="font-size:20px;font-weight:800;color:#ef4444;">${r.cutVol.toFixed(0)}</div>
+                        <div style="font-size:9px;">CORTE m³ (banco)</div>
+                        <div style="font-size:8px;color:var(--text-3);">${r.cutSwell.toFixed(0)} m³ esponj.</div>
                     </div>
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-                        <div style="text-align:center;background:rgba(239,68,68,0.2);padding:8px;border-radius:4px;">
-                            <div style="font-size:18px;font-weight:700;color:#ef4444;">${r.cut.toFixed(0)}</div>
-                            <div style="font-size:9px;">CORTE m³</div>
-                        </div>
-                        <div style="text-align:center;background:rgba(59,130,246,0.2);padding:8px;border-radius:4px;">
-                            <div style="font-size:18px;font-weight:700;color:#3b82f6;">${r.fill.toFixed(0)}</div>
-                            <div style="font-size:9px;">RELLENO m³</div>
-                        </div>
-                    </div>
-                    <div style="margin-top:8px;font-size:10px;">
-                        <div>Balance: <b style="color:${r.balance>0?'#ef4444':'#3b82f6'}">${r.balance>0?'+':''}${r.balance.toFixed(0)} m³</b></div>
-                        <div>Costo: <b>$${(r.cutCost+r.fillCost).toFixed(2)}</b></div>
+                    <div style="text-align:center;background:rgba(59,130,246,0.2);padding:8px;border-radius:4px;">
+                        <div style="font-size:20px;font-weight:800;color:#3b82f6;">${r.fillVol.toFixed(0)}</div>
+                        <div style="font-size:9px;">RELLENO m³ (banco)</div>
+                        <div style="font-size:8px;color:var(--text-3);">${r.fillCompact.toFixed(0)} m³ compact.</div>
                     </div>
                 </div>
-                <div style="margin-top:6px;font-size:9px;">
-                    <span style="display:inline-block;width:10px;height:10px;background:#ef4444;"></span> Corte
-                    <span style="display:inline-block;width:10px;height:10px;background:#3b82f6;margin-left:8px;"></span> Relleno
-                </div>`;
-            }
+            </div>
+            <div style="margin-top:10px;">
+                <div style="font-size:10px;font-weight:600;color:#f59e0b;margin-bottom:6px;">
+                    <i class="fa-solid fa-chart-bar"></i> TERRENO Y BALANCE
+                </div>
+                <div style="font-size:10px;color:var(--text-2);padding:8px;background:var(--bg-glass);border-radius:6px;">
+                    <div>Área: <b>${r.areaHa.toFixed(4)} Ha</b> (${r.areaM2.toFixed(0)} m²)</div>
+                    <div>Elevación: <b>${r.minE.toFixed(1)}m</b> - <b>${r.maxE.toFixed(1)}m</b> (Δ ${r.desnivel.toFixed(1)}m)</div>
+                    <div>Promedio: <b>${r.avgE.toFixed(2)} m</b> | Desv. est: <b>${r.stdDev.toFixed(2)} m</b></div>
+                    <div>Pendiente promedio: <b>${r.avgSlope.toFixed(1)}%</b></div>
+                    <div style="margin-top:4px;">Suelo: <b>${r.soilName}</b> (Fe=${r.swell}, Fc=${r.compact})</div>
+                    <div>Balance banco: <b style="color:${r.balanceInsitu > 0 ? '#ef4444' : '#3b82f6'};">${r.balanceInsitu > 0 ? '+' : ''}${r.balanceInsitu.toFixed(0)} m³</b></div>
+                    <div>Balance suelto: <b style="color:${r.balanceSwell > 0 ? '#ef4444' : '#3b82f6'};">${r.balanceSwell > 0 ? '+' : ''}${r.balanceSwell.toFixed(0)} m³</b></div>
+                    ${r.sobrante > 0 ? `<div style="color:#ef4444;">Material sobrante a botar: <b>${r.sobrante.toFixed(0)} m³</b></div>` : ''}
+                    ${r.faltante > 0 ? `<div style="color:#3b82f6;">Material faltante a importar: <b>${r.faltante.toFixed(0)} m³</b></div>` : ''}
+                    <div>Peso corte: <b>${r.cutWeight.toFixed(0)} t</b> | Peso relleno: <b>${r.fillWeight.toFixed(0)} t</b></div>
+                    <div>Puntos analizados: <b>${r.totalPoints}</b> (res. ${r.resolution}m)</div>
+                </div>
+            </div>
+            <div style="margin-top:10px;">
+                <div style="font-size:10px;font-weight:600;color:#22c55e;margin-bottom:6px;">
+                    <i class="fa-solid fa-dollar-sign"></i> COSTOS ESTIMADOS
+                </div>
+                <div style="font-size:10px;color:var(--text-2);padding:8px;background:var(--bg-glass);border-radius:6px;">
+                    <div>Corte: <b>$${r.costCut.toFixed(2)}</b></div>
+                    <div>Relleno: <b>$${r.costFill.toFixed(2)}</b></div>
+                    <div>Transporte (${r.haulDist} km): <b>$${r.costHaul.toFixed(2)}</b></div>
+                    <div style="margin-top:4px;font-size:12px;font-weight:700;color:#22c55e;">TOTAL: $${r.costTotal.toFixed(2)}</div>
+                </div>
+            </div>
+            <div style="margin-top:10px;">
+                <div style="font-size:10px;font-weight:600;color:#a78bfa;margin-bottom:6px;">
+                    <i class="fa-solid fa-clock"></i> EQUIPO Y TIEMPO ESTIMADO
+                </div>
+                <div style="font-size:10px;color:var(--text-2);padding:8px;background:var(--bg-glass);border-radius:6px;">
+                    <div>Excavadora (${r.prodExcavadora} m³/h): <b>${r.horasExcavadora.toFixed(1)} h</b> ≈ ${(r.horasExcavadora / 8).toFixed(1)} días</div>
+                    <div>Motoniveladora: <b>${r.horasMoto.toFixed(1)} h</b></div>
+                    <div>Compactador: <b>${r.horasCompact.toFixed(1)} h</b></div>
+                    <div>Viajes volqueta (${r.prodVolqueta} m³): <b>${r.viajesVolqueta}</b></div>
+                </div>
+            </div>
+            <div style="margin-top:6px;font-size:9px;">
+                <span style="display:inline-block;width:10px;height:10px;background:#ef4444;border-radius:2px;"></span> Corte
+                <span style="display:inline-block;width:10px;height:10px;background:#3b82f6;margin-left:8px;border-radius:2px;"></span> Relleno
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:12px;">
+                <button class="btn btn-2" onclick="EarthworkCalc.exportKML()" style="font-size:8px;padding:6px;" title="Google Earth">
+                    <i class="fa-solid fa-earth-americas"></i> KML
+                </button>
+                <button class="btn btn-2" onclick="EarthworkCalc.exportGeoJSON()" style="font-size:8px;padding:6px;" title="GIS">
+                    <i class="fa-solid fa-code"></i> JSON
+                </button>
+                <button class="btn btn-2" onclick="EarthworkCalc.exportDXF()" style="font-size:8px;padding:6px;" title="AutoCAD">
+                    <i class="fa-solid fa-drafting-compass"></i> DXF
+                </button>
+                <button class="btn btn-2" onclick="EarthworkCalc.exportCSV()" style="font-size:8px;padding:6px;" title="Excel">
+                    <i class="fa-solid fa-file-csv"></i> CSV
+                </button>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:4px;">
+                <button class="btn btn-2" onclick="EarthworkCalc.exportGPX()" style="font-size:8px;padding:6px;" title="GPS">
+                    <i class="fa-solid fa-satellite"></i> GPX
+                </button>
+                <button class="btn btn-2" onclick="EarthworkCalc.exportPDF()" style="font-size:8px;padding:6px;" title="Informe PDF">
+                    <i class="fa-solid fa-file-pdf"></i> PDF
+                </button>
+                <button class="btn btn-2" onclick="EarthworkCalc.exportTXT()" style="font-size:8px;padding:6px;" title="Texto">
+                    <i class="fa-solid fa-file-lines"></i> TXT
+                </button>
+                <button class="btn btn-2" onclick="EarthworkCalc.copyToClipboard()" style="font-size:8px;padding:6px;" title="Copiar">
+                    <i class="fa-solid fa-copy"></i> COPY
+                </button>
+            </div>`;
         },
-        clear() { if(this.layer) this.layer.clearLayers(); this.results = null; }
+        clear() {
+            if (this.layer) this.layer.clearLayers();
+            this.results = null;
+            this.gridPoints = [];
+            if ($('ew-results')) $('ew-results').style.display = 'none';
+            Toast.show('Limpiado', 'success');
+        },
+        // ========== EXPORTACIÓN KML ==========
+        exportKML() {
+            if (!this.results) return Toast.show('Calcula primero', 'error');
+            const r = this.results;
+            const coords = State.polygon.geometry.coordinates[0];
+            const kmlCoords = coords.map(c => `${c[0]},${c[1]},0`).join(' ');
+            let kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+<n>Movimiento de Tierras - WIN-TEL v30</n>
+<description>Nivel: ${r.level.toFixed(2)}m | Corte: ${r.cutVol.toFixed(0)}m³ | Relleno: ${r.fillVol.toFixed(0)}m³
+Generado: ${new Date().toLocaleString('es-ES')}</description>
+<Style id="cutZone"><LineStyle><color>ff4444ef</color><width>1</width></LineStyle><PolyStyle><color>804444ef</color></PolyStyle></Style>
+<Style id="fillZone"><LineStyle><color>fff68230</color><width>1</width></LineStyle><PolyStyle><color>80f68230</color></PolyStyle></Style>
+<Style id="boundary"><LineStyle><color>ff0b9ef5</color><width>3</width></LineStyle><PolyStyle><color>300b9ef5</color></PolyStyle></Style>
+<Folder>
+<n>Límite del terreno</n>
+<Placemark>
+    <n>Parcela - Mov. Tierras</n>
+    <description><![CDATA[MOVIMIENTO DE TIERRAS - WIN-TEL v30
+Área: ${r.areaHa.toFixed(4)} Ha
+Nivel proyecto: ${r.level.toFixed(2)} m
+Suelo: ${r.soilName} (Fe=${r.swell}, Fc=${r.compact})
+Corte (banco): ${r.cutVol.toFixed(0)} m³
+Corte (esponjado): ${r.cutSwell.toFixed(0)} m³
+Relleno (banco): ${r.fillVol.toFixed(0)} m³
+Relleno (compactado): ${r.fillCompact.toFixed(0)} m³
+Balance: ${r.balanceInsitu.toFixed(0)} m³
+Costo total: $${r.costTotal.toFixed(2)}]]></description>
+    <styleUrl>#boundary</styleUrl>
+    <Polygon><outerBoundaryIs><LinearRing><coordinates>${kmlCoords}</coordinates></LinearRing></outerBoundaryIs></Polygon>
+</Placemark>
+</Folder>
+<Folder>
+<n>Zonas de Corte (${r.cutCells} celdas)</n>\n`;
+            const cellDeg = r.resolution / 111320;
+            this.gridPoints.forEach((p, i) => {
+                const diff = p.elev - r.level;
+                if (diff > 0.01) {
+                    const c = [[p.lng, p.lat], [p.lng + cellDeg, p.lat], [p.lng + cellDeg, p.lat + cellDeg], [p.lng, p.lat + cellDeg], [p.lng, p.lat]];
+                    kml += `<Placemark><n>Corte ${i}</n><description>Elev: ${p.elev.toFixed(2)}m, Corte: ${diff.toFixed(2)}m</description><styleUrl>#cutZone</styleUrl>
+<Polygon><outerBoundaryIs><LinearRing><coordinates>${c.map(v => v[0]+','+v[1]+',0').join(' ')}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>\n`;
+                }
+            });
+            kml += `</Folder>\n<Folder>\n<n>Zonas de Relleno (${r.fillCells} celdas)</n>\n`;
+            this.gridPoints.forEach((p, i) => {
+                const diff = p.elev - r.level;
+                if (diff < -0.01) {
+                    const c = [[p.lng, p.lat], [p.lng + cellDeg, p.lat], [p.lng + cellDeg, p.lat + cellDeg], [p.lng, p.lat + cellDeg], [p.lng, p.lat]];
+                    kml += `<Placemark><n>Relleno ${i}</n><description>Elev: ${p.elev.toFixed(2)}m, Relleno: ${Math.abs(diff).toFixed(2)}m</description><styleUrl>#fillZone</styleUrl>
+<Polygon><outerBoundaryIs><LinearRing><coordinates>${c.map(v => v[0]+','+v[1]+',0').join(' ')}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>\n`;
+                }
+            });
+            kml += `</Folder>\n</Document>\n</kml>`;
+            download(kml, `mov_tierras_${Date.now()}.kml`, 'application/vnd.google-earth.kml+xml');
+            Toast.show('KML exportado', 'success');
+        },
+        // ========== EXPORTACIÓN GeoJSON ==========
+        exportGeoJSON() {
+            if (!this.results) return Toast.show('Calcula primero', 'error');
+            const r = this.results;
+            const cellDeg = r.resolution / 111320;
+            const features = [{
+                type: 'Feature',
+                properties: { type: 'boundary', level_m: r.level, area_ha: r.areaHa, cut_m3: r.cutVol, fill_m3: r.fillVol, cost: r.costTotal },
+                geometry: State.polygon.geometry
+            }];
+            this.gridPoints.forEach((p, i) => {
+                const diff = p.elev - r.level;
+                if (Math.abs(diff) > 0.01) {
+                    features.push({
+                        type: 'Feature',
+                        properties: {
+                            type: diff > 0 ? 'cut' : 'fill', elevation_m: parseFloat(p.elev.toFixed(2)),
+                            depth_m: parseFloat(Math.abs(diff).toFixed(2)),
+                            volume_m3: parseFloat((Math.abs(diff) * r.resolution * r.resolution).toFixed(1))
+                        },
+                        geometry: {
+                            type: 'Polygon',
+                            coordinates: [[[p.lng, p.lat], [p.lng + cellDeg, p.lat], [p.lng + cellDeg, p.lat + cellDeg], [p.lng, p.lat + cellDeg], [p.lng, p.lat]]]
+                        }
+                    });
+                }
+            });
+            const geojson = {
+                type: 'FeatureCollection', name: 'Movimiento de Tierras - WIN-TEL v30',
+                crs: { type: 'name', properties: { name: 'urn:ogc:def:crs:OGC:1.3:CRS84' } },
+                properties: { software: 'WIN-TEL GEOMATICS PRO v30', date: new Date().toISOString(), level_m: r.level, soil: r.soilName, cut_m3: r.cutVol, fill_m3: r.fillVol },
+                features
+            };
+            download(JSON.stringify(geojson, null, 2), `mov_tierras_${Date.now()}.geojson`, 'application/json');
+            Toast.show('GeoJSON exportado', 'success');
+        },
+        // ========== EXPORTACIÓN DXF ==========
+        exportDXF() {
+            if (!this.results) return Toast.show('Calcula primero', 'error');
+            const r = this.results;
+            const coords = State.polygon.geometry.coordinates[0];
+            let dxf = `0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1014\n9\n$INSUNITS\n70\n6\n0\nENDSEC\n0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nLAYER\n70\n4\n`;
+            dxf += `0\nLAYER\n2\nLIMITE_TERRENO\n70\n0\n62\n5\n6\nCONTINUOUS\n`;
+            dxf += `0\nLAYER\n2\nZONA_CORTE\n70\n0\n62\n1\n6\nCONTINUOUS\n`;
+            dxf += `0\nLAYER\n2\nZONA_RELLENO\n70\n0\n62\n5\n6\nCONTINUOUS\n`;
+            dxf += `0\nLAYER\n2\nELEVACIONES\n70\n0\n62\n3\n6\nCONTINUOUS\n`;
+            dxf += `0\nENDTAB\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n`;
+            // Boundary polyline
+            dxf += `0\nPOLYLINE\n8\nLIMITE_TERRENO\n66\n1\n70\n1\n`;
+            coords.forEach(c => {
+                const x = c[0] * 111320 * Math.cos(c[1] * Math.PI / 180);
+                const y = c[1] * 110540;
+                dxf += `0\nVERTEX\n8\nLIMITE_TERRENO\n10\n${x.toFixed(3)}\n20\n${y.toFixed(3)}\n30\n0\n`;
+            });
+            dxf += `0\nSEQEND\n8\nLIMITE_TERRENO\n`;
+            // Grid points with elevation
+            this.gridPoints.forEach(p => {
+                const x = p.lng * 111320 * Math.cos(p.lat * Math.PI / 180);
+                const y = p.lat * 110540;
+                const diff = p.elev - r.level;
+                const layer = diff > 0.01 ? 'ZONA_CORTE' : diff < -0.01 ? 'ZONA_RELLENO' : 'ELEVACIONES';
+                dxf += `0\nPOINT\n8\n${layer}\n10\n${x.toFixed(3)}\n20\n${y.toFixed(3)}\n30\n${p.elev.toFixed(3)}\n`;
+            });
+            dxf += `0\nENDSEC\n0\nEOF`;
+            download(dxf, `mov_tierras_${Date.now()}.dxf`, 'application/dxf');
+            Toast.show('DXF exportado (AutoCAD)', 'success');
+        },
+        // ========== EXPORTACIÓN CSV ==========
+        exportCSV() {
+            if (!this.results) return Toast.show('Calcula primero', 'error');
+            const r = this.results;
+            let csv = `MOVIMIENTO DE TIERRAS - WIN-TEL GEOMATICS PRO v30\n`;
+            csv += `Fecha,${new Date().toLocaleString('es-ES')}\n\n`;
+            csv += `DATOS DEL TERRENO\n`;
+            csv += `Área (Ha),${r.areaHa.toFixed(4)}\nÁrea (m²),${r.areaM2.toFixed(0)}\n`;
+            csv += `Elevación mín (m),${r.minE.toFixed(2)}\nElevación máx (m),${r.maxE.toFixed(2)}\n`;
+            csv += `Elevación promedio (m),${r.avgE.toFixed(2)}\nDesviación estándar (m),${r.stdDev.toFixed(2)}\n`;
+            csv += `Desnivel (m),${r.desnivel.toFixed(2)}\nPendiente promedio (%),${r.avgSlope.toFixed(1)}\n`;
+            csv += `Resolución (m),${r.resolution}\nPuntos analizados,${r.totalPoints}\n\n`;
+            csv += `PARÁMETROS\n`;
+            csv += `Nivel de proyecto (m),${r.level.toFixed(2)}\nTipo de suelo,${r.soilName}\n`;
+            csv += `Factor esponjamiento,${r.swell}\nFactor compactación,${r.compact}\nPeso específico (t/m³),${r.soilWeight}\n\n`;
+            csv += `VOLÚMENES\n`;
+            csv += `Corte banco (m³),${r.cutVol.toFixed(1)}\nCorte esponjado (m³),${r.cutSwell.toFixed(1)}\n`;
+            csv += `Relleno banco (m³),${r.fillVol.toFixed(1)}\nRelleno compactado (m³),${r.fillCompact.toFixed(1)}\n`;
+            csv += `Balance banco (m³),${r.balanceInsitu.toFixed(1)}\nBalance suelto (m³),${r.balanceSwell.toFixed(1)}\n`;
+            csv += `Material sobrante (m³),${r.sobrante.toFixed(1)}\nMaterial faltante (m³),${r.faltante.toFixed(1)}\n`;
+            csv += `Peso corte (t),${r.cutWeight.toFixed(0)}\nPeso relleno (t),${r.fillWeight.toFixed(0)}\n\n`;
+            csv += `COSTOS\nCorte ($),${r.costCut.toFixed(2)}\nRelleno ($),${r.costFill.toFixed(2)}\nTransporte ($),${r.costHaul.toFixed(2)}\nCOSTO TOTAL ($),${r.costTotal.toFixed(2)}\n\n`;
+            csv += `EQUIPO ESTIMADO\nExcavadora (h),${r.horasExcavadora.toFixed(1)}\nMotoniveladora (h),${r.horasMoto.toFixed(1)}\nCompactador (h),${r.horasCompact.toFixed(1)}\nViajes volqueta,${r.viajesVolqueta}\n\n`;
+            csv += `GRILLA DE ELEVACIONES\nPUNTO,LATITUD,LONGITUD,ELEVACION_M,TIPO,PROFUNDIDAD_M,VOLUMEN_CELDA_M3\n`;
+            this.gridPoints.forEach((p, i) => {
+                const diff = p.elev - r.level;
+                const tipo = diff > 0.01 ? 'CORTE' : diff < -0.01 ? 'RELLENO' : 'NIVEL';
+                csv += `${i + 1},${p.lat.toFixed(6)},${p.lng.toFixed(6)},${p.elev.toFixed(2)},${tipo},${Math.abs(diff).toFixed(2)},${(Math.abs(diff) * r.resolution * r.resolution).toFixed(1)}\n`;
+            });
+            download(csv, `mov_tierras_${Date.now()}.csv`, 'text/csv');
+            Toast.show('CSV exportado', 'success');
+        },
+        // ========== EXPORTACIÓN GPX ==========
+        exportGPX() {
+            if (!this.results) return Toast.show('Calcula primero', 'error');
+            const r = this.results;
+            const coords = State.polygon.geometry.coordinates[0];
+            let gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="WIN-TEL GEOMATICS PRO v30" xmlns="http://www.topografix.com/GPX/1/1">
+<metadata>
+    <n>Movimiento de Tierras</n>
+    <desc>Nivel: ${r.level.toFixed(2)}m | Corte: ${r.cutVol.toFixed(0)}m³ | Relleno: ${r.fillVol.toFixed(0)}m³</desc>
+    <time>${new Date().toISOString()}</time>
+</metadata>\n`;
+            // Vertices del polígono
+            coords.forEach((c, i) => {
+                if (i < coords.length - 1) {
+                    gpx += `<wpt lat="${c[1].toFixed(6)}" lon="${c[0].toFixed(6)}">
+    <n>V${i + 1}</n><desc>Vértice ${i + 1}</desc><sym>Flag, Blue</sym>
+</wpt>\n`;
+                }
+            });
+            // Puntos de corte/relleno significativos
+            this.gridPoints.forEach((p, i) => {
+                const diff = p.elev - r.level;
+                if (Math.abs(diff) > 0.5) { // Solo puntos significativos
+                    const tipo = diff > 0 ? 'CORTE' : 'RELLENO';
+                    gpx += `<wpt lat="${p.lat.toFixed(6)}" lon="${p.lng.toFixed(6)}">
+    <ele>${p.elev.toFixed(1)}</ele>
+    <n>${tipo}-${i}</n><desc>${tipo}: ${Math.abs(diff).toFixed(2)}m</desc>
+    <sym>${diff > 0 ? 'Danger Area' : 'Water Source'}</sym>
+</wpt>\n`;
+                }
+            });
+            gpx += `<trk><n>Perímetro terreno</n><trkseg>\n`;
+            coords.forEach(c => { gpx += `    <trkpt lat="${c[1].toFixed(6)}" lon="${c[0].toFixed(6)}"></trkpt>\n`; });
+            gpx += `</trkseg></trk>\n</gpx>`;
+            download(gpx, `mov_tierras_${Date.now()}.gpx`, 'application/gpx+xml');
+            Toast.show('GPX exportado', 'success');
+        },
+        // ========== EXPORTACIÓN PDF ==========
+        exportPDF() {
+            if (!this.results) return Toast.show('Calcula primero', 'error');
+            if (typeof jspdf === 'undefined') return Toast.show('PDF no disponible', 'error');
+            const r = this.results;
+            const { jsPDF } = jspdf;
+            const doc = new jsPDF();
+            let y = 15;
+            doc.setFontSize(18); doc.setTextColor(245, 158, 11);
+            doc.text('INFORME DE MOVIMIENTO DE TIERRAS', 105, y, { align: 'center' }); y += 7;
+            doc.setFontSize(10); doc.setTextColor(100);
+            doc.text('WIN-TEL GEOMATICS PRO v30', 105, y, { align: 'center' }); y += 5;
+            doc.text(new Date().toLocaleString('es-ES'), 105, y, { align: 'center' }); y += 10;
+            doc.setDrawColor(245, 158, 11); doc.setLineWidth(0.5); doc.line(20, y, 190, y); y += 10;
+            doc.setFontSize(13); doc.setTextColor(0);
+            doc.text('DATOS DEL TERRENO', 20, y); y += 7;
+            doc.setFontSize(10);
+            doc.text(`Área: ${r.areaHa.toFixed(4)} Ha (${r.areaM2.toFixed(0)} m²)`, 25, y); y += 5;
+            doc.text(`Elevación: ${r.minE.toFixed(2)}m - ${r.maxE.toFixed(2)}m (Desnivel: ${r.desnivel.toFixed(2)}m)`, 25, y); y += 5;
+            doc.text(`Elevación promedio: ${r.avgE.toFixed(2)} m | Desv. est: ${r.stdDev.toFixed(2)} m`, 25, y); y += 5;
+            doc.text(`Pendiente promedio: ${r.avgSlope.toFixed(1)}%`, 25, y); y += 5;
+            doc.text(`Resolución: ${r.resolution}m (${r.totalPoints} puntos)`, 25, y); y += 10;
+            doc.setFontSize(13); doc.text('PARÁMETROS', 20, y); y += 7;
+            doc.setFontSize(10);
+            doc.text(`Nivel de proyecto: ${r.level.toFixed(2)} m`, 25, y); y += 5;
+            doc.text(`Suelo: ${r.soilName} (Esponj: ${r.swell}, Compact: ${r.compact}, Peso: ${r.soilWeight} t/m³)`, 25, y); y += 10;
+            doc.setFontSize(13); doc.text('VOLÚMENES', 20, y); y += 7;
+            doc.setFontSize(10);
+            doc.setTextColor(239, 68, 68); doc.text(`CORTE: ${r.cutVol.toFixed(0)} m³ (banco) → ${r.cutSwell.toFixed(0)} m³ (esponjado)`, 25, y); y += 5;
+            doc.setTextColor(59, 130, 246); doc.text(`RELLENO: ${r.fillVol.toFixed(0)} m³ (banco) → ${r.fillCompact.toFixed(0)} m³ (compactado necesario)`, 25, y); y += 5;
+            doc.setTextColor(0);
+            doc.text(`Balance banco: ${r.balanceInsitu > 0 ? '+' : ''}${r.balanceInsitu.toFixed(0)} m³`, 25, y); y += 5;
+            doc.text(`Balance suelto: ${r.balanceSwell > 0 ? '+' : ''}${r.balanceSwell.toFixed(0)} m³`, 25, y); y += 5;
+            if (r.sobrante > 0) { doc.text(`Material sobrante a botar: ${r.sobrante.toFixed(0)} m³`, 25, y); y += 5; }
+            if (r.faltante > 0) { doc.text(`Material faltante a importar: ${r.faltante.toFixed(0)} m³`, 25, y); y += 5; }
+            doc.text(`Peso: Corte ${r.cutWeight.toFixed(0)} t | Relleno ${r.fillWeight.toFixed(0)} t`, 25, y); y += 10;
+            doc.setFontSize(13); doc.text('COSTOS ESTIMADOS', 20, y); y += 7;
+            doc.setFontSize(10);
+            doc.text(`Corte: $${r.costCut.toFixed(2)}`, 25, y); y += 5;
+            doc.text(`Relleno: $${r.costFill.toFixed(2)}`, 25, y); y += 5;
+            doc.text(`Transporte (${r.haulDist} km): $${r.costHaul.toFixed(2)}`, 25, y); y += 5;
+            doc.setFontSize(12); doc.setTextColor(34, 197, 94);
+            doc.text(`COSTO TOTAL: $${r.costTotal.toFixed(2)}`, 25, y); y += 10;
+            doc.setFontSize(13); doc.setTextColor(0); doc.text('EQUIPO Y TIEMPO', 20, y); y += 7;
+            doc.setFontSize(10);
+            doc.text(`Excavadora (${r.prodExcavadora} m³/h): ${r.horasExcavadora.toFixed(1)} h ≈ ${(r.horasExcavadora / 8).toFixed(1)} días`, 25, y); y += 5;
+            doc.text(`Motoniveladora: ${r.horasMoto.toFixed(1)} h`, 25, y); y += 5;
+            doc.text(`Compactador: ${r.horasCompact.toFixed(1)} h`, 25, y); y += 5;
+            doc.text(`Viajes volqueta (${r.prodVolqueta} m³): ${r.viajesVolqueta}`, 25, y); y += 10;
+            if (y > 240) { doc.addPage(); y = 20; }
+            doc.setFontSize(13); doc.text('RECOMENDACIONES', 20, y); y += 7;
+            doc.setFontSize(10);
+            const recs = [
+                r.avgSlope > 15 ? 'Terreno con pendiente pronunciada, considerar terrazas' : null,
+                r.sobrante > 500 ? 'Gran volumen sobrante, evaluar botadero cercano' : null,
+                r.faltante > 500 ? 'Gran volumen faltante, evaluar fuente de préstamo' : null,
+                r.soilId === 'roca_dura' ? 'Suelo rocoso: considerar voladura controlada' : null,
+                'Realizar compactación por capas de máx. 30 cm',
+                'Verificar humedad óptima antes de compactar',
+                'Mantener drenaje provisional durante la obra'
+            ].filter(Boolean);
+            recs.forEach(rec => { if (y > 275) { doc.addPage(); y = 20; } doc.text(`• ${rec}`, 25, y); y += 5; });
+            doc.setFontSize(8); doc.setTextColor(150);
+            doc.text('Generado por WIN-TEL GEOMATICS PRO v30 - WindowsTelecom C.A.', 105, 290, { align: 'center' });
+            doc.save(`informe_mov_tierras_${Date.now()}.pdf`);
+            Toast.show('PDF exportado', 'success');
+        },
+        // ========== EXPORTACIÓN TXT ==========
+        exportTXT() {
+            if (!this.results) return Toast.show('Calcula primero', 'error');
+            const r = this.results;
+            let report = `╔══════════════════════════════════════════════════════════════╗
+║         INFORME DE MOVIMIENTO DE TIERRAS                    ║
+║         WIN-TEL GEOMATICS PRO v30                           ║
+╚══════════════════════════════════════════════════════════════╝
+
+Fecha de generación: ${new Date().toLocaleString('es-ES')}
+
+═══════════════════════════════════════════════════════════════
+                    DATOS DEL TERRENO
+═══════════════════════════════════════════════════════════════
+
+Área total ................. ${r.areaHa.toFixed(4)} Ha (${r.areaM2.toFixed(0)} m²)
+Elevación mínima ........... ${r.minE.toFixed(2)} m
+Elevación máxima ........... ${r.maxE.toFixed(2)} m
+Elevación promedio ......... ${r.avgE.toFixed(2)} m
+Desviación estándar ........ ${r.stdDev.toFixed(2)} m
+Desnivel total ............. ${r.desnivel.toFixed(2)} m
+Pendiente promedio ......... ${r.avgSlope.toFixed(1)}%
+Resolución ................. ${r.resolution} m (${r.totalPoints} puntos)
+
+═══════════════════════════════════════════════════════════════
+                      PARÁMETROS
+═══════════════════════════════════════════════════════════════
+
+Nivel de proyecto .......... ${r.level.toFixed(2)} m
+Tipo de suelo .............. ${r.soilName}
+Factor de esponjamiento .... ${r.swell}
+Factor de compactación ..... ${r.compact}
+Peso específico ............ ${r.soilWeight} t/m³
+
+═══════════════════════════════════════════════════════════════
+                      VOLÚMENES
+═══════════════════════════════════════════════════════════════
+
+CORTE (banco) .............. ${r.cutVol.toFixed(1)} m³
+CORTE (esponjado) .......... ${r.cutSwell.toFixed(1)} m³
+RELLENO (banco) ............ ${r.fillVol.toFixed(1)} m³
+RELLENO (compactado nec.) .. ${r.fillCompact.toFixed(1)} m³
+Balance en banco ........... ${r.balanceInsitu > 0 ? '+' : ''}${r.balanceInsitu.toFixed(1)} m³
+Balance en suelto .......... ${r.balanceSwell > 0 ? '+' : ''}${r.balanceSwell.toFixed(1)} m³
+${r.sobrante > 0 ? `Material sobrante a botar .. ${r.sobrante.toFixed(1)} m³` : ''}
+${r.faltante > 0 ? `Material faltante .......... ${r.faltante.toFixed(1)} m³` : ''}
+Peso corte ................. ${r.cutWeight.toFixed(0)} t
+Peso relleno ............... ${r.fillWeight.toFixed(0)} t
+Celdas corte ............... ${r.cutCells}
+Celdas relleno ............. ${r.fillCells}
+
+═══════════════════════════════════════════════════════════════
+                  COSTOS ESTIMADOS
+═══════════════════════════════════════════════════════════════
+
+Corte ...................... $${r.costCut.toFixed(2)}
+Relleno .................... $${r.costFill.toFixed(2)}
+Transporte (${r.haulDist} km) ........... $${r.costHaul.toFixed(2)}
+────────────────────────────────────────
+COSTO TOTAL ................ $${r.costTotal.toFixed(2)}
+
+═══════════════════════════════════════════════════════════════
+               EQUIPO Y TIEMPO ESTIMADO
+═══════════════════════════════════════════════════════════════
+
+Excavadora (${r.prodExcavadora} m³/h) ....... ${r.horasExcavadora.toFixed(1)} h ≈ ${(r.horasExcavadora / 8).toFixed(1)} días
+Motoniveladora ............. ${r.horasMoto.toFixed(1)} h
+Compactador ................ ${r.horasCompact.toFixed(1)} h
+Viajes volqueta (${r.prodVolqueta} m³) .. ${r.viajesVolqueta}
+
+═══════════════════════════════════════════════════════════════
+                   RECOMENDACIONES
+═══════════════════════════════════════════════════════════════
+${r.avgSlope > 15 ? '\n• Terreno con pendiente pronunciada, considerar terrazas' : ''}
+${r.sobrante > 500 ? '• Gran volumen sobrante, evaluar botadero cercano' : ''}
+${r.faltante > 500 ? '• Gran volumen faltante, evaluar fuente de préstamo' : ''}
+• Realizar compactación por capas de máx. 30 cm
+• Verificar humedad óptima del suelo antes de compactar
+• Mantener drenaje provisional durante la obra
+• Control topográfico durante y después de la nivelación
+
+═══════════════════════════════════════════════════════════════
+         Generado por WIN-TEL GEOMATICS PRO v30
+                  WindowsTelecom C.A.
+               Valencia, Carabobo, Venezuela
+═══════════════════════════════════════════════════════════════
+`;
+            download(report, `informe_mov_tierras_${Date.now()}.txt`, 'text/plain');
+            Toast.show('Informe TXT exportado', 'success');
+        },
+        // ========== COPIAR AL PORTAPAPELES ==========
+        copyToClipboard() {
+            if (!this.results) return Toast.show('Calcula primero', 'error');
+            const r = this.results;
+            let text = `MOVIMIENTO DE TIERRAS - WIN-TEL v30\n`;
+            text += `Fecha: ${new Date().toLocaleString('es-ES')}\n\n`;
+            text += `Área: ${r.areaHa.toFixed(4)} Ha | Nivel: ${r.level.toFixed(2)} m\n`;
+            text += `Suelo: ${r.soilName} (Fe=${r.swell}, Fc=${r.compact})\n\n`;
+            text += `VOLÚMENES:\n`;
+            text += `Corte: ${r.cutVol.toFixed(0)} m³ (esponj: ${r.cutSwell.toFixed(0)} m³)\n`;
+            text += `Relleno: ${r.fillVol.toFixed(0)} m³ (compact: ${r.fillCompact.toFixed(0)} m³)\n`;
+            text += `Balance: ${r.balanceInsitu > 0 ? '+' : ''}${r.balanceInsitu.toFixed(0)} m³\n`;
+            text += `${r.sobrante > 0 ? 'Sobrante: ' + r.sobrante.toFixed(0) + ' m³\n' : ''}`;
+            text += `${r.faltante > 0 ? 'Faltante: ' + r.faltante.toFixed(0) + ' m³\n' : ''}`;
+            text += `\nCOSTOS:\n`;
+            text += `Corte: $${r.costCut.toFixed(2)} | Relleno: $${r.costFill.toFixed(2)}\n`;
+            text += `Transporte: $${r.costHaul.toFixed(2)}\n`;
+            text += `TOTAL: $${r.costTotal.toFixed(2)}\n`;
+            navigator.clipboard.writeText(text).then(() => {
+                Toast.show('Copiado al portapapeles', 'success');
+            }).catch(() => { Toast.show('Error al copiar', 'error'); });
+        }
     };
 
     // ========== MÓDULO 4: COMPARADOR DE TERRENOS ==========
@@ -15713,94 +16902,729 @@ ${this.criticalPoints.filter(cp => cp.risk === 'alto').length > 2 ? '• ⚠️ 
     // ========== MÓDULO 5: CALCULADORA DE RIEGO ==========
     const IrrigationCalc = {
         panel: null, lastResults: null,
+        // Base de datos de cultivos con Kc promedio (FAO-56)
+        crops: [
+            { name: 'Maíz', kc: 1.15 }, { name: 'Arroz (inundado)', kc: 1.20 },
+            { name: 'Caña de azúcar', kc: 1.25 }, { name: 'Tomate', kc: 1.05 },
+            { name: 'Cebolla', kc: 0.95 }, { name: 'Papa', kc: 1.10 },
+            { name: 'Frijol/Caraotas', kc: 1.05 }, { name: 'Sorgo', kc: 1.00 },
+            { name: 'Pimentón/Ají', kc: 1.00 }, { name: 'Banano/Plátano', kc: 1.10 },
+            { name: 'Cítricos', kc: 0.70 }, { name: 'Aguacate', kc: 0.70 },
+            { name: 'Mango', kc: 0.75 }, { name: 'Café', kc: 0.90 },
+            { name: 'Hortalizas (general)', kc: 1.05 }, { name: 'Frutales (general)', kc: 0.85 },
+            { name: 'Pasto/Césped', kc: 1.00 }, { name: 'Algodón', kc: 1.15 },
+            { name: 'Girasol', kc: 1.10 }, { name: 'Soya', kc: 1.10 }
+        ],
+        // Sistemas de riego con eficiencia, descripción y parámetros
+        systems: [
+            { id: 'goteo', name: 'Goteo', eff: 0.92, desc: 'Alta frecuencia, bajo volumen', icon: 'fa-droplet', color: '#22c55e' },
+            { id: 'microasp', name: 'Microaspersión', eff: 0.85, desc: 'Micro-rociadores localizados', icon: 'fa-spray-can-sparkles', color: '#06b6d4' },
+            { id: 'aspersion', name: 'Aspersión', eff: 0.75, desc: 'Aspersores móviles o fijos', icon: 'fa-shower', color: '#3b82f6' },
+            { id: 'pivote', name: 'Pivote central', eff: 0.80, desc: 'Sistema mecanizado circular', icon: 'fa-circle-notch', color: '#8b5cf6' },
+            { id: 'surco', name: 'Gravedad/Surcos', eff: 0.55, desc: 'Conducción por surcos', icon: 'fa-water', color: '#f59e0b' },
+            { id: 'inundacion', name: 'Inundación', eff: 0.40, desc: 'Inundación de melgas/tablas', icon: 'fa-house-flood-water', color: '#ef4444' }
+        ],
         togglePanel() {
             if (this.panel) { this.panel.remove(); this.panel = null; return; }
-            const html = `<div id="irrigation-panel" class="float-panel" style="top:80px;right:60px;width:340px;">
+            const cropOpts = this.crops.map((c, i) => `<option value="${i}" ${i===0?'selected':''}>${c.name} (Kc=${c.kc.toFixed(2)})</option>`).join('');
+            const sysOpts = this.systems.map((s, i) => `<option value="${i}" ${s.id==='aspersion'?'selected':''}>${s.name} (${(s.eff*100).toFixed(0)}%)</option>`).join('');
+            const html = `<div id="irrigation-panel" class="float-panel" style="top:80px;right:60px;width:360px;max-height:90vh;overflow-y:auto;">
                 <div class="panel-hdr" style="background:linear-gradient(135deg,rgba(14,165,233,0.3),rgba(2,132,199,0.2));">
                     <div class="panel-title"><i class="fa-solid fa-droplet" style="color:#0ea5e9;"></i> Calculadora de Riego</div>
                     <button class="panel-close" onclick="IrrigationCalc.togglePanel()"><i class="fa-solid fa-times"></i></button>
                 </div>
                 <div class="panel-body">
-                    <div class="form-group"><label class="form-label">Cultivo</label>
-                        <select id="irr-crop" class="form-input" onchange="IrrigationCalc.updateKc()">
-                            <option value="1.15">Maíz (Kc=1.15)</option><option value="1.05">Hortalizas (1.05)</option>
-                            <option value="0.95">Frutales (0.95)</option><option value="1.00">Pasto (1.00)</option>
-                        </select>
+                    <div style="background:rgba(14,165,233,0.15);border:1px solid #0ea5e9;border-radius:6px;padding:10px;margin-bottom:12px;">
+                        <div style="font-size:10px;color:#0ea5e9;font-weight:700;">💧 DISEÑO DE SISTEMA DE RIEGO</div>
+                        <div style="font-size:9px;color:var(--text-3);margin-top:3px;">Calcula necesidades hídricas, caudales y diseño por sistema (FAO-56)</div>
+                    </div>
+                    <div class="form-group"><label class="form-label">Cultivo (20 tipos)</label>
+                        <select id="irr-crop" class="form-input" onchange="IrrigationCalc.updateKc()">${cropOpts}</select>
                     </div>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
                         <div class="form-group"><label class="form-label">ETo (mm/día)</label>
-                            <input type="number" id="irr-eto" class="form-input" value="5" step="0.5">
+                            <input type="number" id="irr-eto" class="form-input" value="5" step="0.5" min="1" max="15">
                         </div>
-                        <div class="form-group"><label class="form-label">Kc</label>
-                            <input type="number" id="irr-kc" class="form-input" value="1.15" step="0.05">
+                        <div class="form-group"><label class="form-label">Kc (editable)</label>
+                            <input type="number" id="irr-kc" class="form-input" value="1.15" step="0.05" min="0.3" max="1.5">
                         </div>
                     </div>
-                    <div class="form-group"><label class="form-label">Eficiencia</label>
-                        <select id="irr-eff" class="form-input">
-                            <option value="0.95">Goteo (95%)</option><option value="0.85">Microaspersión (85%)</option>
-                            <option value="0.75" selected>Aspersión (75%)</option><option value="0.60">Gravedad (60%)</option>
-                        </select>
+                    <div class="form-group"><label class="form-label">Sistema de Riego</label>
+                        <select id="irr-system" class="form-input" onchange="IrrigationCalc.updateSystem()">${sysOpts}</select>
                     </div>
+                    <div id="irr-sys-info" style="font-size:9px;color:var(--text-3);padding:4px 8px;margin:-6px 0 8px;"></div>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-                        <div class="form-group"><label class="form-label">Horas/día</label>
-                            <input type="number" id="irr-hours" class="form-input" value="8">
+                        <div class="form-group"><label class="form-label">Eficiencia (%)</label>
+                            <input type="number" id="irr-eff" class="form-input" value="75" step="5" min="20" max="98">
                         </div>
                         <div class="form-group"><label class="form-label">Frecuencia (días)</label>
-                            <input type="number" id="irr-freq" class="form-input" value="3">
+                            <input type="number" id="irr-freq" class="form-input" value="3" min="1" max="30">
+                        </div>
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                        <div class="form-group"><label class="form-label">Horas/día riego</label>
+                            <input type="number" id="irr-hours" class="form-input" value="8" min="1" max="24">
+                        </div>
+                        <div class="form-group"><label class="form-label">Prof. raíz (m)</label>
+                            <input type="number" id="irr-root" class="form-input" value="0.40" step="0.05" min="0.1" max="2.0">
                         </div>
                     </div>
                     <button class="btn" onclick="IrrigationCalc.calculate()" style="background:linear-gradient(135deg,#0ea5e9,#0284c7);">
-                        <i class="fa-solid fa-calculator"></i> CALCULAR
+                        <i class="fa-solid fa-calculator"></i> CALCULAR RIEGO
                     </button>
                     <div id="irr-results" style="display:none;margin-top:12px;"></div>
                 </div>
             </div>`;
             document.body.insertAdjacentHTML('beforeend', html);
             this.panel = document.getElementById('irrigation-panel');
+            this.updateSystem();
         },
-        updateKc() { $('irr-kc').value = $('irr-crop')?.value || 1.15; },
+        updateKc() {
+            const idx = parseInt($('irr-crop')?.value) || 0;
+            const crop = this.crops[idx];
+            if (crop && $('irr-kc')) $('irr-kc').value = crop.kc.toFixed(2);
+        },
+        updateSystem() {
+            const idx = parseInt($('irr-system')?.value) || 0;
+            const sys = this.systems[idx];
+            if (sys && $('irr-eff')) $('irr-eff').value = (sys.eff * 100).toFixed(0);
+            const info = $('irr-sys-info');
+            if (info && sys) info.innerHTML = `<i class="fa-solid ${sys.icon}" style="color:${sys.color};"></i> ${sys.desc} | Eficiencia típica: ${(sys.eff*100).toFixed(0)}%`;
+        },
         calculate() {
-            if (!State.polygon) return Toast.show('Dibuja un polígono', 'error');
-            const areaM2 = turf.area(State.polygon), areaHa = areaM2/10000;
+            if (!State.polygon) return Toast.show('Dibuja un polígono primero', 'error');
+            const areaM2 = turf.area(State.polygon), areaHa = areaM2 / 10000;
+            const cropIdx = parseInt($('irr-crop')?.value) || 0;
+            const crop = this.crops[cropIdx];
+            const sysIdx = parseInt($('irr-system')?.value) || 0;
+            const sys = this.systems[sysIdx];
             const eto = parseFloat($('irr-eto')?.value) || 5;
             const kc = parseFloat($('irr-kc')?.value) || 1.15;
-            const eff = parseFloat($('irr-eff')?.value) || 0.75;
+            const effPct = parseFloat($('irr-eff')?.value) || 75;
+            const eff = effPct / 100;
             const hours = parseInt($('irr-hours')?.value) || 8;
             const freq = parseInt($('irr-freq')?.value) || 3;
-            
-            const etc = eto * kc;
-            const gross = etc / eff;
-            const dailyVol = (gross * areaM2) / 1000;
-            const irrVol = (etc * freq * areaM2) / (eff * 1000);
-            const flowRate = (dailyVol * 1000) / (hours * 3600);
-            const drippers = Math.ceil(areaM2 / 0.3);
-            const sprinklers = Math.ceil(areaM2 / (Math.PI * 144 * 0.65));
-            
-            this.lastResults = { areaHa, etc, gross, dailyVol, irrVol, flowRate, drippers, sprinklers };
+            const rootDepth = parseFloat($('irr-root')?.value) || 0.40;
+
+            // ---- Cálculos hidráulicos ----
+            const etc = eto * kc;                                   // ETc mm/día
+            const grossMm = etc / eff;                              // Lámina bruta mm/día
+            const dailyVolM3 = (grossMm * areaM2) / 1000;          // Volumen diario m³/día
+            const irrLaminaMm = etc * freq;                         // Lámina neta por riego mm
+            const irrLaminaGross = irrLaminaMm / eff;               // Lámina bruta por riego mm
+            const irrVolM3 = (irrLaminaGross * areaM2) / 1000;     // Volumen por riego m³
+            const flowRateLs = (dailyVolM3 * 1000) / (hours * 3600); // Caudal L/s
+            const flowRateM3h = flowRateLs * 3.6;                   // Caudal m³/h
+            const monthlyVolM3 = dailyVolM3 * 30;                   // Volumen mensual m³
+            const annualVolM3 = dailyVolM3 * 365;                   // Volumen anual m³
+
+            // Lámina disponible en suelo (capacidad de campo - marchitez)
+            const AWC = 0.15; // capacidad de agua disponible típica mm/mm (franco)
+            const totalAW = AWC * rootDepth * 1000;  // mm
+            const MAD = 0.50; // agotamiento máximo permisible
+            const RAW = totalAW * MAD;  // mm fácilmente aprovechable
+            const maxFreq = Math.floor(RAW / etc); // frecuencia máxima recomendada (días)
+
+            // ---- Diseño específico por sistema ----
+            let sysDesign = {};
+            if (sys.id === 'goteo') {
+                const dripperFlow = 4;          // L/h por gotero
+                const spacingEmitter = 0.30;    // m entre goteros
+                const spacingRow = 1.0;         // m entre líneas
+                const numDrippers = Math.ceil(areaM2 / (spacingEmitter * spacingRow));
+                const lateralLength = (areaM2 / spacingRow);
+                const numLaterals = Math.ceil(Math.sqrt(areaM2) / spacingRow);
+                sysDesign = { type: 'Goteo', drippers: numDrippers, dripperFlow, spacingEmitter, spacingRow, lateralLength: lateralLength.toFixed(0), numLaterals, pipeMain: Math.ceil(flowRateLs * 0.8) > 75 ? 75 : Math.max(50, Math.ceil(flowRateLs * 0.8)), pipeLateral: 16 };
+            } else if (sys.id === 'microasp') {
+                const microFlow = 50;          // L/h por micro
+                const spacingMicro = 4;        // m entre micro
+                const numMicros = Math.ceil(areaM2 / (spacingMicro * spacingMicro));
+                sysDesign = { type: 'Microaspersión', micros: numMicros, microFlow, spacing: spacingMicro, radius: 2.5, pipeMain: 63, pipeLateral: 25 };
+            } else if (sys.id === 'aspersion') {
+                const sprinklerRadius = 12;    // m radio
+                const coverage = Math.PI * sprinklerRadius * sprinklerRadius * 0.65;
+                const numSprinklers = Math.ceil(areaM2 / coverage);
+                const sprinklerFlow = 1200;    // L/h
+                sysDesign = { type: 'Aspersión', sprinklers: numSprinklers, sprinklerFlow, radius: sprinklerRadius, spacing: sprinklerRadius * 1.4, pipeMain: 90, pipeLateral: 63 };
+            } else if (sys.id === 'pivote') {
+                const radius = Math.sqrt(areaM2 / Math.PI);
+                const numTruss = Math.ceil(radius / 50);
+                sysDesign = { type: 'Pivote Central', radius: radius.toFixed(1), numTruss, rpm: (2.5).toFixed(2), pipeMain: 150, coveredArea: (Math.PI * radius * radius / 10000).toFixed(2) };
+            } else if (sys.id === 'surco') {
+                const furrowLength = Math.min(Math.sqrt(areaM2), 200);
+                const furrowSpacing = 0.75;
+                const numFurrows = Math.ceil(Math.sqrt(areaM2) / furrowSpacing);
+                const furrowFlow = 0.5;        // L/s por surco
+                sysDesign = { type: 'Gravedad/Surcos', furrowLength: furrowLength.toFixed(0), furrowSpacing, numFurrows, furrowFlow, totalFlow: (numFurrows * furrowFlow).toFixed(1), pipeMain: 200, slope: '0.1-0.5%' };
+            } else if (sys.id === 'inundacion') {
+                const melgaWidth = 10;         // m ancho melga
+                const melgaLength = Math.min(Math.sqrt(areaM2) * 1.5, 300);
+                const numMelgas = Math.ceil(areaM2 / (melgaWidth * melgaLength));
+                const laminaMelga = irrLaminaGross;
+                const volPerMelga = (laminaMelga * melgaWidth * melgaLength) / 1000;
+                const fillTime = volPerMelga / (flowRateLs * 3.6);
+                sysDesign = { type: 'Inundación', melgaWidth, melgaLength: melgaLength.toFixed(0), numMelgas, laminaMm: laminaMelga.toFixed(1), volPerMelga: volPerMelga.toFixed(1), fillTimeH: fillTime.toFixed(1), totalFillH: (fillTime * numMelgas).toFixed(1), slope: '0.05-0.2%', dikes: numMelgas + 1, canalMain: 'Revestido 0.4×0.4m' };
+            }
+
+            this.lastResults = {
+                cropName: crop.name, cropKc: kc, systemName: sys.name, systemId: sys.id,
+                systemIcon: sys.icon, systemColor: sys.color, effPct,
+                areaM2, areaHa, eto, kc, eff, hours, freq, rootDepth,
+                etc, grossMm, dailyVolM3, irrLaminaMm, irrLaminaGross,
+                irrVolM3, flowRateLs, flowRateM3h, monthlyVolM3, annualVolM3,
+                totalAW, RAW, maxFreq, sysDesign
+            };
             this.showResults();
-            Toast.show('Cálculo completado', 'success');
+            Toast.show('Cálculo de riego completado', 'success');
         },
         showResults() {
             const r = this.lastResults;
+            if (!r) return;
             const rd = $('irr-results');
-            if (rd) {
-                rd.style.display = 'block';
-                rd.innerHTML = `<div style="background:var(--bg-glass);padding:10px;border-radius:6px;">
-                    <div style="text-align:center;margin-bottom:8px;">
-                        <div style="font-size:24px;font-weight:800;color:#0ea5e9;">${r.etc.toFixed(1)}</div>
-                        <div style="font-size:9px;">ETc (mm/día)</div>
-                    </div>
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
-                        <div style="text-align:center;"><div style="font-size:16px;font-weight:700;color:#22c55e;">${r.dailyVol.toFixed(1)}</div><div style="font-size:8px;">m³/día</div></div>
-                        <div style="text-align:center;"><div style="font-size:16px;font-weight:700;color:#f59e0b;">${r.irrVol.toFixed(1)}</div><div style="font-size:8px;">m³/riego</div></div>
-                    </div>
-                    <div style="margin-top:8px;font-size:9px;background:rgba(14,165,233,0.1);padding:6px;border-radius:4px;">
-                        <div>Caudal: <b>${r.flowRate.toFixed(2)} L/s</b></div>
-                        <div>Goteros: <b>${r.drippers.toLocaleString()}</b></div>
-                        <div>Aspersores: <b>${r.sprinklers}</b></div>
-                    </div>
-                </div>`;
+            if (!rd) return;
+            rd.style.display = 'block';
+            // Build system-specific info
+            let sysHtml = '';
+            const sd = r.sysDesign;
+            if (r.systemId === 'goteo') {
+                sysHtml = `<div>Goteros: <b>${sd.drippers.toLocaleString()}</b> (${sd.dripperFlow} L/h c/u)</div>
+                    <div>Espaciamiento: <b>${sd.spacingEmitter}m × ${sd.spacingRow}m</b></div>
+                    <div>Laterales: <b>${sd.numLaterals}</b> (Ø${sd.pipeLateral}mm)</div>
+                    <div>Long. laterales: <b>${sd.lateralLength} m</b></div>
+                    <div>Tubería principal: <b>Ø${sd.pipeMain}mm</b></div>`;
+            } else if (r.systemId === 'microasp') {
+                sysHtml = `<div>Microaspersores: <b>${sd.micros.toLocaleString()}</b> (${sd.microFlow} L/h)</div>
+                    <div>Espaciamiento: <b>${sd.spacing}m × ${sd.spacing}m</b></div>
+                    <div>Radio mojado: <b>${sd.radius}m</b></div>
+                    <div>Lateral: <b>Ø${sd.pipeLateral}mm</b> | Principal: <b>Ø${sd.pipeMain}mm</b></div>`;
+            } else if (r.systemId === 'aspersion') {
+                sysHtml = `<div>Aspersores: <b>${sd.sprinklers}</b> (${sd.sprinklerFlow} L/h)</div>
+                    <div>Radio: <b>${sd.radius}m</b> | Espaciamiento: <b>${sd.spacing.toFixed(1)}m</b></div>
+                    <div>Lateral: <b>Ø${sd.pipeLateral}mm</b> | Principal: <b>Ø${sd.pipeMain}mm</b></div>`;
+            } else if (r.systemId === 'pivote') {
+                sysHtml = `<div>Radio pivote: <b>${sd.radius} m</b></div>
+                    <div>Torres/Truss: <b>${sd.numTruss}</b></div>
+                    <div>Área cubierta: <b>${sd.coveredArea} Ha</b></div>
+                    <div>Tubería: <b>Ø${sd.pipeMain}mm</b></div>`;
+            } else if (r.systemId === 'surco') {
+                sysHtml = `<div>Surcos: <b>${sd.numFurrows}</b> (c/${sd.furrowSpacing}m)</div>
+                    <div>Largo surco: <b>${sd.furrowLength} m</b></div>
+                    <div>Caudal/surco: <b>${sd.furrowFlow} L/s</b></div>
+                    <div>Caudal total: <b>${sd.totalFlow} L/s</b></div>
+                    <div>Pendiente recom.: <b>${sd.slope}</b></div>`;
+            } else if (r.systemId === 'inundacion') {
+                sysHtml = `<div>Melgas: <b>${sd.numMelgas}</b> (${sd.melgaWidth}m × ${sd.melgaLength}m)</div>
+                    <div>Lámina por melga: <b>${sd.laminaMm} mm</b></div>
+                    <div>Volumen/melga: <b>${sd.volPerMelga} m³</b></div>
+                    <div>Tiempo llenado: <b>${sd.fillTimeH} h/melga</b></div>
+                    <div>Tiempo total: <b>${sd.totalFillH} h</b></div>
+                    <div>Bordos/diques: <b>${sd.dikes}</b></div>
+                    <div>Pendiente: <b>${sd.slope}</b></div>
+                    <div>Canal: <b>${sd.canalMain}</b></div>`;
             }
+
+            rd.innerHTML = `<div style="background:linear-gradient(135deg,rgba(14,165,233,0.2),rgba(2,132,199,0.15));border-radius:8px;padding:12px;">
+                <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;">
+                    <div style="text-align:center;">
+                        <div style="font-size:22px;font-weight:800;color:#0ea5e9;">${r.etc.toFixed(2)}</div>
+                        <div style="font-size:9px;color:var(--text-3);">ETc (mm/día)</div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div style="font-size:22px;font-weight:800;color:#22c55e;">${r.dailyVolM3.toFixed(1)}</div>
+                        <div style="font-size:9px;color:var(--text-3);">VOL/DÍA (m³)</div>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px;">
+                    <div style="text-align:center;background:var(--bg-glass);padding:6px;border-radius:4px;">
+                        <div style="font-size:14px;font-weight:700;color:#f59e0b;">${r.irrVolM3.toFixed(1)}</div>
+                        <div style="font-size:8px;color:var(--text-3);">m³/riego</div>
+                    </div>
+                    <div style="text-align:center;background:var(--bg-glass);padding:6px;border-radius:4px;">
+                        <div style="font-size:14px;font-weight:700;color:#a78bfa;">${r.flowRateLs.toFixed(2)}</div>
+                        <div style="font-size:8px;color:var(--text-3);">Caudal L/s</div>
+                    </div>
+                    <div style="text-align:center;background:var(--bg-glass);padding:6px;border-radius:4px;">
+                        <div style="font-size:14px;font-weight:700;color:#ec4899;">${r.irrLaminaGross.toFixed(1)}</div>
+                        <div style="font-size:8px;color:var(--text-3);">Lámina mm</div>
+                    </div>
+                </div>
+            </div>
+            <div style="margin-top:10px;">
+                <div style="font-size:10px;font-weight:600;color:#0ea5e9;margin-bottom:6px;">
+                    <i class="fa-solid fa-chart-bar"></i> BALANCE HÍDRICO
+                </div>
+                <div style="font-size:10px;color:var(--text-2);padding:8px;background:var(--bg-glass);border-radius:6px;">
+                    <div>Lámina bruta diaria: <b>${r.grossMm.toFixed(2)} mm</b></div>
+                    <div>Agua disponible suelo: <b>${r.totalAW.toFixed(1)} mm</b></div>
+                    <div>Agua fácilmente aprov.: <b>${r.RAW.toFixed(1)} mm</b></div>
+                    <div>Frecuencia máx. recom.: <b>${r.maxFreq} días</b> ${r.freq > r.maxFreq ? '<span style="color:#ef4444;">⚠️ excedida</span>' : '<span style="color:#22c55e;">✓</span>'}</div>
+                    <div>Vol. mensual: <b>${r.monthlyVolM3.toFixed(0)} m³</b> | Anual: <b>${(r.annualVolM3/1000).toFixed(1)} mil m³</b></div>
+                </div>
+            </div>
+            <div style="margin-top:10px;">
+                <div style="font-size:10px;font-weight:600;margin-bottom:6px;">
+                    <i class="fa-solid ${r.systemIcon}" style="color:${r.systemColor};"></i> <span style="color:${r.systemColor};">DISEÑO: ${r.systemName.toUpperCase()}</span>
+                </div>
+                <div style="font-size:10px;color:var(--text-2);padding:8px;background:var(--bg-glass);border-radius:6px;">
+                    ${sysHtml}
+                </div>
+            </div>
+            <div style="margin-top:10px;">
+                <div style="font-size:10px;font-weight:600;color:#22c55e;margin-bottom:6px;">
+                    <i class="fa-solid fa-lightbulb"></i> RECOMENDACIONES
+                </div>
+                <div style="font-size:10px;color:var(--text-2);padding:8px;background:var(--bg-glass);border-radius:6px;">
+                    ${r.freq > r.maxFreq ? '<div style="color:#ef4444;">• ⚠️ Frecuencia excede la máxima recomendada, reducir a ' + r.maxFreq + ' días</div>' : ''}
+                    ${r.systemId === 'inundacion' ? '<div>• Nivelar terreno antes de instalar melgas</div><div>• Pendiente uniforme 0.05-0.2% para distribución homogénea</div>' : ''}
+                    ${r.systemId === 'surco' ? '<div>• Verificar pendiente entre 0.1-0.5%</div><div>• Largo de surco según tipo de suelo</div>' : ''}
+                    ${r.systemId === 'goteo' ? '<div>• Instalar filtros (disco/arena) obligatorio</div><div>• Presión de trabajo: 1.0-1.5 bar</div>' : ''}
+                    ${r.systemId === 'aspersion' ? '<div>• Evitar riego con vientos >15 km/h</div><div>• Presión de trabajo: 2.5-4.0 bar</div>' : ''}
+                    <div>• Programar riego en horas de baja evaporación</div>
+                    <div>• Monitorear humedad del suelo periódicamente</div>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:12px;">
+                <button class="btn btn-2" onclick="IrrigationCalc.exportKML()" style="font-size:8px;padding:6px;" title="Google Earth">
+                    <i class="fa-solid fa-earth-americas"></i> KML
+                </button>
+                <button class="btn btn-2" onclick="IrrigationCalc.exportGeoJSON()" style="font-size:8px;padding:6px;" title="GIS">
+                    <i class="fa-solid fa-code"></i> JSON
+                </button>
+                <button class="btn btn-2" onclick="IrrigationCalc.exportDXF()" style="font-size:8px;padding:6px;" title="AutoCAD">
+                    <i class="fa-solid fa-drafting-compass"></i> DXF
+                </button>
+                <button class="btn btn-2" onclick="IrrigationCalc.exportCSV()" style="font-size:8px;padding:6px;" title="Excel">
+                    <i class="fa-solid fa-file-csv"></i> CSV
+                </button>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-top:4px;">
+                <button class="btn btn-2" onclick="IrrigationCalc.exportGPX()" style="font-size:8px;padding:6px;" title="GPS">
+                    <i class="fa-solid fa-satellite"></i> GPX
+                </button>
+                <button class="btn btn-2" onclick="IrrigationCalc.exportPDF()" style="font-size:8px;padding:6px;" title="Informe PDF">
+                    <i class="fa-solid fa-file-pdf"></i> PDF
+                </button>
+                <button class="btn btn-2" onclick="IrrigationCalc.exportTXT()" style="font-size:8px;padding:6px;" title="Texto">
+                    <i class="fa-solid fa-file-lines"></i> TXT
+                </button>
+                <button class="btn btn-2" onclick="IrrigationCalc.copyToClipboard()" style="font-size:8px;padding:6px;" title="Copiar">
+                    <i class="fa-solid fa-copy"></i> COPY
+                </button>
+            </div>`;
+        },
+        // ========== EXPORTACIÓN KML (Google Earth) ==========
+        exportKML() {
+            if (!this.lastResults) return Toast.show('Calcula primero', 'error');
+            const r = this.lastResults;
+            const coords = State.polygon.geometry.coordinates[0];
+            const kmlCoords = coords.map(c => `${c[0]},${c[1]},0`).join(' ');
+            const center = turf.centroid(State.polygon).geometry.coordinates;
+            let kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+<name>Diseño de Riego - ${r.cropName} - WIN-TEL v30</name>
+<description>Sistema: ${r.systemName} | ETc: ${r.etc.toFixed(2)} mm/día | Área: ${r.areaHa.toFixed(4)} Ha
+Generado: ${new Date().toLocaleString('es-ES')}</description>
+<Style id="irrigArea"><LineStyle><color>ffe9a50e</color><width>3</width></LineStyle><PolyStyle><color>500ea5e9</color></PolyStyle></Style>
+<Style id="center"><IconStyle><color>ff0ea5e9</color><scale>1.2</scale><Icon><href>http://maps.google.com/mapfiles/kml/shapes/water.png</href></Icon></IconStyle></Style>
+<Folder>
+<name>Zona de Riego</name>
+<Placemark>
+    <name>Parcela - ${r.cropName}</name>
+    <description><![CDATA[DISEÑO DE RIEGO - WIN-TEL GEOMATICS PRO v30
+Cultivo: ${r.cropName} (Kc=${r.kc})
+Sistema: ${r.systemName} (Eff=${r.effPct}%)
+Área: ${r.areaHa.toFixed(4)} Ha (${r.areaM2.toFixed(0)} m²)
+
+NECESIDADES HÍDRICAS:
+ETc: ${r.etc.toFixed(2)} mm/día
+Lámina bruta: ${r.grossMm.toFixed(2)} mm/día
+Volumen diario: ${r.dailyVolM3.toFixed(1)} m³/día
+Volumen por riego: ${r.irrVolM3.toFixed(1)} m³
+Caudal requerido: ${r.flowRateLs.toFixed(2)} L/s (${r.flowRateM3h.toFixed(1)} m³/h)
+Frecuencia: cada ${r.freq} días
+Vol. mensual: ${r.monthlyVolM3.toFixed(0)} m³
+Vol. anual: ${r.annualVolM3.toFixed(0)} m³]]></description>
+    <styleUrl>#irrigArea</styleUrl>
+    <Polygon><outerBoundaryIs><LinearRing><coordinates>${kmlCoords}</coordinates></LinearRing></outerBoundaryIs></Polygon>
+</Placemark>
+<Placemark>
+    <name>Centro de Riego</name>
+    <description>Punto de captación/bomba sugerido</description>
+    <styleUrl>#center</styleUrl>
+    <Point><coordinates>${center[0]},${center[1]},0</coordinates></Point>
+</Placemark>
+</Folder>
+</Document>
+</kml>`;
+            download(kml, `riego_${r.systemId}_${Date.now()}.kml`, 'application/vnd.google-earth.kml+xml');
+            Toast.show('KML exportado', 'success');
+        },
+        // ========== EXPORTACIÓN GeoJSON (GIS) ==========
+        exportGeoJSON() {
+            if (!this.lastResults) return Toast.show('Calcula primero', 'error');
+            const r = this.lastResults;
+            const center = turf.centroid(State.polygon).geometry.coordinates;
+            const geojson = {
+                type: 'FeatureCollection',
+                name: 'Diseño de Riego - WIN-TEL v30',
+                crs: { type: 'name', properties: { name: 'urn:ogc:def:crs:OGC:1.3:CRS84' } },
+                properties: {
+                    software: 'WIN-TEL GEOMATICS PRO v30',
+                    date: new Date().toISOString(),
+                    crop: r.cropName, system: r.systemName, etc_mm: r.etc, area_ha: r.areaHa
+                },
+                features: [
+                    {
+                        type: 'Feature',
+                        properties: {
+                            type: 'irrigation_zone', crop: r.cropName, kc: r.kc,
+                            system: r.systemName, efficiency_pct: r.effPct,
+                            area_ha: parseFloat(r.areaHa.toFixed(4)), area_m2: parseFloat(r.areaM2.toFixed(0)),
+                            etc_mm_day: parseFloat(r.etc.toFixed(2)), gross_mm_day: parseFloat(r.grossMm.toFixed(2)),
+                            daily_vol_m3: parseFloat(r.dailyVolM3.toFixed(1)),
+                            irrigation_vol_m3: parseFloat(r.irrVolM3.toFixed(1)),
+                            flow_rate_ls: parseFloat(r.flowRateLs.toFixed(2)),
+                            flow_rate_m3h: parseFloat(r.flowRateM3h.toFixed(1)),
+                            frequency_days: r.freq, hours_day: r.hours,
+                            monthly_vol_m3: parseFloat(r.monthlyVolM3.toFixed(0)),
+                            annual_vol_m3: parseFloat(r.annualVolM3.toFixed(0)),
+                            root_depth_m: r.rootDepth, RAW_mm: parseFloat(r.RAW.toFixed(1)),
+                            max_freq_days: r.maxFreq
+                        },
+                        geometry: State.polygon.geometry
+                    },
+                    {
+                        type: 'Feature',
+                        properties: { type: 'pump_point', name: 'Centro captación sugerido' },
+                        geometry: { type: 'Point', coordinates: center }
+                    }
+                ]
+            };
+            download(JSON.stringify(geojson, null, 2), `riego_${r.systemId}_${Date.now()}.geojson`, 'application/json');
+            Toast.show('GeoJSON exportado', 'success');
+        },
+        // ========== EXPORTACIÓN DXF (AutoCAD) ==========
+        exportDXF() {
+            if (!this.lastResults) return Toast.show('Calcula primero', 'error');
+            const r = this.lastResults;
+            const coords = State.polygon.geometry.coordinates[0];
+            const center = turf.centroid(State.polygon).geometry.coordinates;
+            let dxf = `0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1014\n9\n$INSUNITS\n70\n6\n0\nENDSEC\n0\nSECTION\n2\nTABLES\n0\nTABLE\n2\nLAYER\n70\n3\n`;
+            dxf += `0\nLAYER\n2\nZONA_RIEGO\n70\n0\n62\n4\n6\nCONTINUOUS\n`;
+            dxf += `0\nLAYER\n2\nPUNTO_CAPTACION\n70\n0\n62\n1\n6\nCONTINUOUS\n`;
+            dxf += `0\nLAYER\n2\nINFO_RIEGO\n70\n0\n62\n5\n6\nCONTINUOUS\n`;
+            dxf += `0\nENDTAB\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n`;
+            // Polígono de riego
+            dxf += `0\nPOLYLINE\n8\nZONA_RIEGO\n66\n1\n70\n1\n`;
+            coords.forEach(c => {
+                const x = c[0] * 111320 * Math.cos(c[1] * Math.PI / 180);
+                const y = c[1] * 110540;
+                dxf += `0\nVERTEX\n8\nZONA_RIEGO\n10\n${x.toFixed(3)}\n20\n${y.toFixed(3)}\n30\n0\n`;
+            });
+            dxf += `0\nSEQEND\n8\nZONA_RIEGO\n`;
+            // Punto central
+            const cx = center[0] * 111320 * Math.cos(center[1] * Math.PI / 180);
+            const cy = center[1] * 110540;
+            dxf += `0\nPOINT\n8\nPUNTO_CAPTACION\n10\n${cx.toFixed(3)}\n20\n${cy.toFixed(3)}\n30\n0\n`;
+            dxf += `0\nTEXT\n8\nINFO_RIEGO\n10\n${(cx+10).toFixed(3)}\n20\n${(cy+10).toFixed(3)}\n30\n0\n40\n5\n1\n${r.systemName} - ${r.cropName} - ${r.areaHa.toFixed(2)}Ha\n`;
+            dxf += `0\nENDSEC\n0\nEOF`;
+            download(dxf, `riego_${r.systemId}_${Date.now()}.dxf`, 'application/dxf');
+            Toast.show('DXF exportado (AutoCAD)', 'success');
+        },
+        // ========== EXPORTACIÓN CSV (Excel) ==========
+        exportCSV() {
+            if (!this.lastResults) return Toast.show('Calcula primero', 'error');
+            const r = this.lastResults;
+            const sd = r.sysDesign;
+            let csv = `DISEÑO DE RIEGO - WIN-TEL GEOMATICS PRO v30\n`;
+            csv += `Fecha,${new Date().toLocaleString('es-ES')}\n\n`;
+            csv += `DATOS DEL TERRENO\n`;
+            csv += `Área (Ha),${r.areaHa.toFixed(4)}\n`;
+            csv += `Área (m²),${r.areaM2.toFixed(0)}\n\n`;
+            csv += `PARÁMETROS DEL CULTIVO\n`;
+            csv += `Cultivo,${r.cropName}\n`;
+            csv += `Coeficiente Kc,${r.kc}\n`;
+            csv += `ETo (mm/día),${r.eto}\n`;
+            csv += `Profundidad raíz (m),${r.rootDepth}\n\n`;
+            csv += `SISTEMA DE RIEGO\n`;
+            csv += `Sistema,${r.systemName}\n`;
+            csv += `Eficiencia (%),${r.effPct}\n`;
+            csv += `Horas/día,${r.hours}\n`;
+            csv += `Frecuencia (días),${r.freq}\n\n`;
+            csv += `NECESIDADES HÍDRICAS\n`;
+            csv += `ETc (mm/día),${r.etc.toFixed(2)}\n`;
+            csv += `Lámina bruta (mm/día),${r.grossMm.toFixed(2)}\n`;
+            csv += `Lámina por riego neta (mm),${r.irrLaminaMm.toFixed(2)}\n`;
+            csv += `Lámina por riego bruta (mm),${r.irrLaminaGross.toFixed(2)}\n`;
+            csv += `Volumen diario (m³/día),${r.dailyVolM3.toFixed(1)}\n`;
+            csv += `Volumen por riego (m³),${r.irrVolM3.toFixed(1)}\n`;
+            csv += `Caudal requerido (L/s),${r.flowRateLs.toFixed(2)}\n`;
+            csv += `Caudal requerido (m³/h),${r.flowRateM3h.toFixed(1)}\n`;
+            csv += `Vol. mensual (m³),${r.monthlyVolM3.toFixed(0)}\n`;
+            csv += `Vol. anual (m³),${r.annualVolM3.toFixed(0)}\n\n`;
+            csv += `BALANCE HÍDRICO DEL SUELO\n`;
+            csv += `Agua disponible total (mm),${r.totalAW.toFixed(1)}\n`;
+            csv += `Agua fácilmente aprovechable (mm),${r.RAW.toFixed(1)}\n`;
+            csv += `Frecuencia máxima recomendada (días),${r.maxFreq}\n\n`;
+            csv += `DISEÑO DEL SISTEMA: ${r.systemName.toUpperCase()}\n`;
+            Object.entries(sd).forEach(([k, v]) => { if (k !== 'type') csv += `${k},${v}\n`; });
+            csv += `\nCOORDENADAS DEL POLÍGONO\n`;
+            csv += `PUNTO,LATITUD,LONGITUD\n`;
+            State.polygon.geometry.coordinates[0].forEach((c, i) => {
+                csv += `${i + 1},${c[1].toFixed(6)},${c[0].toFixed(6)}\n`;
+            });
+            download(csv, `riego_${r.systemId}_${Date.now()}.csv`, 'text/csv');
+            Toast.show('CSV exportado', 'success');
+        },
+        // ========== EXPORTACIÓN GPX (GPS) ==========
+        exportGPX() {
+            if (!this.lastResults) return Toast.show('Calcula primero', 'error');
+            const r = this.lastResults;
+            const center = turf.centroid(State.polygon).geometry.coordinates;
+            const coords = State.polygon.geometry.coordinates[0];
+            let gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="WIN-TEL GEOMATICS PRO v30" xmlns="http://www.topografix.com/GPX/1/1">
+<metadata>
+    <name>Diseño de Riego - ${r.cropName}</name>
+    <desc>Sistema: ${r.systemName} | ETc: ${r.etc.toFixed(2)} mm/día | Área: ${r.areaHa.toFixed(4)} Ha</desc>
+    <time>${new Date().toISOString()}</time>
+</metadata>
+<wpt lat="${center[1].toFixed(6)}" lon="${center[0].toFixed(6)}">
+    <name>CAPTACION</name>
+    <desc>Punto de captación/bomba sugerido - Caudal: ${r.flowRateLs.toFixed(2)} L/s</desc>
+    <sym>Water Source</sym>
+</wpt>\n`;
+            coords.forEach((c, i) => {
+                if (i < coords.length - 1) {
+                    gpx += `<wpt lat="${c[1].toFixed(6)}" lon="${c[0].toFixed(6)}">
+    <name>V${i + 1}</name>
+    <desc>Vértice ${i + 1} de zona de riego</desc>
+    <sym>Flag, Blue</sym>
+</wpt>\n`;
+                }
+            });
+            gpx += `<trk>
+    <name>Perímetro zona de riego</name>
+    <desc>${r.cropName} - ${r.systemName}</desc>
+    <trkseg>\n`;
+            coords.forEach(c => {
+                gpx += `        <trkpt lat="${c[1].toFixed(6)}" lon="${c[0].toFixed(6)}"></trkpt>\n`;
+            });
+            gpx += `    </trkseg>\n</trk>\n</gpx>`;
+            download(gpx, `riego_${r.systemId}_${Date.now()}.gpx`, 'application/gpx+xml');
+            Toast.show('GPX exportado (GPS)', 'success');
+        },
+        // ========== EXPORTACIÓN PDF (Informe) ==========
+        exportPDF() {
+            if (!this.lastResults) return Toast.show('Calcula primero', 'error');
+            if (typeof jspdf === 'undefined') return Toast.show('PDF no disponible', 'error');
+            const r = this.lastResults;
+            const sd = r.sysDesign;
+            const { jsPDF } = jspdf;
+            const doc = new jsPDF();
+            let y = 15;
+            // Título
+            doc.setFontSize(18);
+            doc.setTextColor(14, 165, 233);
+            doc.text('INFORME DE DISEÑO DE RIEGO', 105, y, { align: 'center' });
+            y += 7;
+            doc.setFontSize(10);
+            doc.setTextColor(100);
+            doc.text('WIN-TEL GEOMATICS PRO v30', 105, y, { align: 'center' });
+            y += 5;
+            doc.text(new Date().toLocaleString('es-ES'), 105, y, { align: 'center' });
+            y += 10;
+            doc.setDrawColor(14, 165, 233);
+            doc.setLineWidth(0.5);
+            doc.line(20, y, 190, y);
+            y += 10;
+            // Datos terreno
+            doc.setFontSize(13);
+            doc.setTextColor(0);
+            doc.text('DATOS DEL TERRENO', 20, y); y += 7;
+            doc.setFontSize(10);
+            doc.text(`Área: ${r.areaHa.toFixed(4)} Ha (${r.areaM2.toFixed(0)} m²)`, 25, y); y += 10;
+            // Cultivo
+            doc.setFontSize(13);
+            doc.text('PARÁMETROS DEL CULTIVO', 20, y); y += 7;
+            doc.setFontSize(10);
+            doc.text(`Cultivo: ${r.cropName}`, 25, y); y += 5;
+            doc.text(`Coeficiente Kc: ${r.kc}`, 25, y); y += 5;
+            doc.text(`ETo: ${r.eto} mm/día`, 25, y); y += 5;
+            doc.text(`Profundidad de raíz: ${r.rootDepth} m`, 25, y); y += 10;
+            // Sistema
+            doc.setFontSize(13);
+            doc.text(`SISTEMA: ${r.systemName.toUpperCase()}`, 20, y); y += 7;
+            doc.setFontSize(10);
+            doc.text(`Eficiencia: ${r.effPct}%`, 25, y); y += 5;
+            doc.text(`Horas de operación: ${r.hours} h/día`, 25, y); y += 5;
+            doc.text(`Frecuencia de riego: cada ${r.freq} días`, 25, y); y += 10;
+            // Necesidades hídricas
+            doc.setFontSize(13);
+            doc.text('NECESIDADES HÍDRICAS', 20, y); y += 7;
+            doc.setFontSize(10);
+            doc.text(`ETc: ${r.etc.toFixed(2)} mm/día`, 25, y); y += 5;
+            doc.text(`Lámina bruta diaria: ${r.grossMm.toFixed(2)} mm`, 25, y); y += 5;
+            doc.text(`Lámina por riego (neta): ${r.irrLaminaMm.toFixed(2)} mm`, 25, y); y += 5;
+            doc.text(`Lámina por riego (bruta): ${r.irrLaminaGross.toFixed(2)} mm`, 25, y); y += 5;
+            doc.text(`Volumen diario: ${r.dailyVolM3.toFixed(1)} m³/día`, 25, y); y += 5;
+            doc.text(`Volumen por riego: ${r.irrVolM3.toFixed(1)} m³`, 25, y); y += 5;
+            doc.text(`Caudal requerido: ${r.flowRateLs.toFixed(2)} L/s (${r.flowRateM3h.toFixed(1)} m³/h)`, 25, y); y += 5;
+            doc.text(`Volumen mensual: ${r.monthlyVolM3.toFixed(0)} m³`, 25, y); y += 5;
+            doc.text(`Volumen anual: ${r.annualVolM3.toFixed(0)} m³`, 25, y); y += 10;
+            // Balance
+            doc.setFontSize(13);
+            doc.text('BALANCE HÍDRICO DEL SUELO', 20, y); y += 7;
+            doc.setFontSize(10);
+            doc.text(`Agua disponible total: ${r.totalAW.toFixed(1)} mm`, 25, y); y += 5;
+            doc.text(`Agua fácilmente aprovechable: ${r.RAW.toFixed(1)} mm`, 25, y); y += 5;
+            doc.text(`Frecuencia máxima recomendada: ${r.maxFreq} días`, 25, y); y += 10;
+            // Diseño del sistema
+            if (y > 220) { doc.addPage(); y = 20; }
+            doc.setFontSize(13);
+            doc.text(`DISEÑO: ${sd.type?.toUpperCase() || r.systemName.toUpperCase()}`, 20, y); y += 7;
+            doc.setFontSize(10);
+            Object.entries(sd).forEach(([k, v]) => {
+                if (k !== 'type') {
+                    if (y > 270) { doc.addPage(); y = 20; }
+                    doc.text(`${k}: ${v}`, 25, y); y += 5;
+                }
+            });
+            y += 5;
+            // Recomendaciones
+            if (y > 240) { doc.addPage(); y = 20; }
+            doc.setFontSize(13);
+            doc.text('RECOMENDACIONES', 20, y); y += 7;
+            doc.setFontSize(10);
+            const recs = [
+                r.freq > r.maxFreq ? `ALERTA: Frecuencia ${r.freq} días excede el máximo recomendado de ${r.maxFreq} días` : null,
+                r.systemId === 'inundacion' ? 'Nivelar terreno para distribución uniforme del agua' : null,
+                r.systemId === 'inundacion' ? 'Pendiente uniforme 0.05-0.2% entre bordos' : null,
+                r.systemId === 'goteo' ? 'Instalar sistema de filtrado (disco o arena) obligatorio' : null,
+                r.systemId === 'surco' ? 'Verificar pendiente del surco entre 0.1-0.5%' : null,
+                'Programar riego en horas de baja evaporación (madrugada)',
+                'Monitorear humedad del suelo periódicamente',
+                'Realizar mantenimiento preventivo del sistema'
+            ].filter(Boolean);
+            recs.forEach(rec => { doc.text(`• ${rec}`, 25, y); y += 5; });
+            // Pie
+            doc.setFontSize(8);
+            doc.setTextColor(150);
+            doc.text('Generado por WIN-TEL GEOMATICS PRO v30 - WindowsTelecom C.A.', 105, 290, { align: 'center' });
+            doc.save(`informe_riego_${r.systemId}_${Date.now()}.pdf`);
+            Toast.show('PDF exportado', 'success');
+        },
+        // ========== EXPORTACIÓN TXT (Informe de texto) ==========
+        exportTXT() {
+            if (!this.lastResults) return Toast.show('Calcula primero', 'error');
+            const r = this.lastResults;
+            const sd = r.sysDesign;
+            let report = `╔══════════════════════════════════════════════════════════════╗
+║           INFORME DE DISEÑO DE RIEGO                        ║
+║           WIN-TEL GEOMATICS PRO v30                         ║
+╚══════════════════════════════════════════════════════════════╝
+
+Fecha de generación: ${new Date().toLocaleString('es-ES')}
+
+═══════════════════════════════════════════════════════════════
+                    DATOS DEL TERRENO
+═══════════════════════════════════════════════════════════════
+
+Área total ................. ${r.areaHa.toFixed(4)} Ha (${r.areaM2.toFixed(0)} m²)
+
+═══════════════════════════════════════════════════════════════
+                 PARÁMETROS DEL CULTIVO
+═══════════════════════════════════════════════════════════════
+
+Cultivo .................... ${r.cropName}
+Coeficiente Kc ............. ${r.kc}
+ETo referencia ............. ${r.eto} mm/día
+Profundidad raíz ........... ${r.rootDepth} m
+
+═══════════════════════════════════════════════════════════════
+                  SISTEMA DE RIEGO
+═══════════════════════════════════════════════════════════════
+
+Sistema .................... ${r.systemName}
+Eficiencia ................. ${r.effPct}%
+Horas de operación ......... ${r.hours} h/día
+Frecuencia de riego ........ cada ${r.freq} días
+
+═══════════════════════════════════════════════════════════════
+                NECESIDADES HÍDRICAS
+═══════════════════════════════════════════════════════════════
+
+ETc (evapotranspiración) ... ${r.etc.toFixed(2)} mm/día
+Lámina bruta diaria ........ ${r.grossMm.toFixed(2)} mm/día
+Lámina neta por riego ...... ${r.irrLaminaMm.toFixed(2)} mm
+Lámina bruta por riego ..... ${r.irrLaminaGross.toFixed(2)} mm
+Volumen diario ............. ${r.dailyVolM3.toFixed(1)} m³/día
+Volumen por riego .......... ${r.irrVolM3.toFixed(1)} m³
+Caudal requerido ........... ${r.flowRateLs.toFixed(2)} L/s (${r.flowRateM3h.toFixed(1)} m³/h)
+Volumen mensual ............ ${r.monthlyVolM3.toFixed(0)} m³
+Volumen anual .............. ${r.annualVolM3.toFixed(0)} m³
+
+═══════════════════════════════════════════════════════════════
+              BALANCE HÍDRICO DEL SUELO
+═══════════════════════════════════════════════════════════════
+
+Agua disponible total ...... ${r.totalAW.toFixed(1)} mm
+Agua fácilmente aprovech. .. ${r.RAW.toFixed(1)} mm
+Frecuencia máx. recomend. .. ${r.maxFreq} días
+${r.freq > r.maxFreq ? '⚠️  ALERTA: La frecuencia configurada EXCEDE la máxima recomendada' : '✓  Frecuencia dentro del rango aceptable'}
+
+═══════════════════════════════════════════════════════════════
+           DISEÑO DEL SISTEMA: ${r.systemName.toUpperCase()}
+═══════════════════════════════════════════════════════════════
+`;
+            Object.entries(sd).forEach(([k, v]) => {
+                if (k !== 'type') report += `${k.replace(/([A-Z])/g, ' $1').trim().padEnd(30, '.')} ${v}\n`;
+            });
+            report += `
+═══════════════════════════════════════════════════════════════
+                   RECOMENDACIONES
+═══════════════════════════════════════════════════════════════
+${r.freq > r.maxFreq ? '\n• ⚠️  Reducir frecuencia de riego a máximo ' + r.maxFreq + ' días' : ''}
+${r.systemId === 'inundacion' ? '• Nivelar terreno antes de instalar melgas\n• Pendiente uniforme 0.05-0.2% para distribución homogénea\n• Construir bordos perimetrales resistentes' : ''}
+${r.systemId === 'surco' ? '• Verificar pendiente entre 0.1-0.5%\n• Largo de surco según tipo de suelo' : ''}
+${r.systemId === 'goteo' ? '• Instalar filtros (disco/arena) obligatorio\n• Presión de trabajo: 1.0-1.5 bar' : ''}
+${r.systemId === 'aspersion' ? '• Evitar riego con vientos >15 km/h\n• Presión de trabajo: 2.5-4.0 bar' : ''}
+• Programar riego en horas de baja evaporación
+• Monitorear humedad del suelo periódicamente
+• Realizar mantenimiento preventivo del sistema
+
+═══════════════════════════════════════════════════════════════
+         Generado por WIN-TEL GEOMATICS PRO v30
+                  WindowsTelecom C.A.
+               Valencia, Carabobo, Venezuela
+═══════════════════════════════════════════════════════════════
+`;
+            download(report, `informe_riego_${r.systemId}_${Date.now()}.txt`, 'text/plain');
+            Toast.show('Informe TXT exportado', 'success');
+        },
+        // ========== COPIAR AL PORTAPAPELES ==========
+        copyToClipboard() {
+            if (!this.lastResults) return Toast.show('Calcula primero', 'error');
+            const r = this.lastResults;
+            let text = `DISEÑO DE RIEGO - WIN-TEL v30\n`;
+            text += `Fecha: ${new Date().toLocaleString('es-ES')}\n\n`;
+            text += `Cultivo: ${r.cropName} (Kc=${r.kc})\n`;
+            text += `Sistema: ${r.systemName} (Eff=${r.effPct}%)\n`;
+            text += `Área: ${r.areaHa.toFixed(4)} Ha\n\n`;
+            text += `RESULTADOS:\n`;
+            text += `ETc: ${r.etc.toFixed(2)} mm/día\n`;
+            text += `Vol. diario: ${r.dailyVolM3.toFixed(1)} m³\n`;
+            text += `Vol. por riego: ${r.irrVolM3.toFixed(1)} m³\n`;
+            text += `Caudal: ${r.flowRateLs.toFixed(2)} L/s (${r.flowRateM3h.toFixed(1)} m³/h)\n`;
+            text += `Lámina bruta: ${r.irrLaminaGross.toFixed(1)} mm\n`;
+            text += `Frecuencia: cada ${r.freq} días\n`;
+            text += `Vol. mensual: ${r.monthlyVolM3.toFixed(0)} m³\n`;
+            text += `Vol. anual: ${r.annualVolM3.toFixed(0)} m³\n`;
+            text += `Frec. máx. recomendada: ${r.maxFreq} días\n`;
+            navigator.clipboard.writeText(text).then(() => {
+                Toast.show('Copiado al portapapeles', 'success');
+            }).catch(() => { Toast.show('Error al copiar', 'error'); });
         }
     };
 
